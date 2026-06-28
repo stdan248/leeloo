@@ -1,21 +1,18 @@
-# Leeloo:) — AI Memory Builder
-# GitLab CI/CD Pipeline
+# Leeloo:) — GitLab CI/CD
 
 stages:
   - build
   - test
   - package
-  - notify
 
 # ========================================
-# 1. BUILD — Check project structure
+# 1. BUILD — перевірка структури проєкту
 # ========================================
 build:
   stage: build
   script:
-    - echo "🔧 Checking project structure..."
+    - echo "Checking project structure..."
     - ls -la
-    - echo "✅ All files are in place!"
   artifacts:
     paths:
       - "**/*"
@@ -24,64 +21,35 @@ build:
     - main
 
 # ========================================
-# 2. TEST — Validate manifest.json and files
+# 2. TEST — перевірка наявності файлів
 # ========================================
 test:
   stage: test
   script:
-    - echo "🧪 Validating manifest.json..."
-    - |
-      if [ -f "manifest.json" ]; then
-        echo "✅ manifest.json exists"
-        if command -v python3 &> /dev/null; then
-          cat manifest.json | python3 -m json.tool > /dev/null 2>&1 && echo "✅ JSON is valid" || echo "⚠️ JSON validation failed (but continuing)"
-        else
-          echo "⚠️ Python3 not found — skipping JSON validation"
-        fi
-      else
-        echo "❌ manifest.json not found!"
-        exit 1
-      fi
-    - echo "🧪 Checking LICENSE and README.md..."
-    - test -f LICENSE && echo "✅ LICENSE exists" || echo "⚠️ LICENSE not found"
-    - test -f README.md && echo "✅ README.md exists" || echo "⚠️ README.md not found"
-    - echo "🧪 Checking essential folders..."
-    - test -d icons && echo "✅ icons/ exists" || echo "⚠️ icons/ not found"
-    - test -d src && echo "✅ src/ exists" || echo "⚠️ src/ not found"
+    - echo "Checking manifest.json..."
+    - if [ -f "manifest.json" ]; then echo "manifest.json found"; else echo "manifest.json missing"; exit 1; fi
+    - echo "Checking LICENSE..."
+    - if [ -f "LICENSE" ]; then echo "LICENSE found"; else echo "LICENSE missing"; fi
+    - echo "Checking README.md..."
+    - if [ -f "README.md" ]; then echo "README.md found"; else echo "README.md missing"; fi
+    - echo "All checks completed!"
   dependencies:
     - build
   only:
     - main
 
 # ========================================
-# 3. PACKAGE — Create release ZIP archive
+# 3. PACKAGE — створення ZIP-архіву
 # ========================================
 package:
   stage: package
   script:
-    - echo "📦 Creating release archive..."
-    - zip -r leeloo-${CI_COMMIT_SHORT_SHA}.zip . -x "*.git*" ".gitlab-ci.yml" ".gitignore" "*.zip"
-    - echo "✅ Archive created: leeloo-${CI_COMMIT_SHORT_SHA}.zip"
-    - ls -lh *.zip
+    - echo "Creating archive..."
+    - zip -r leeloo-$(git rev-parse --short HEAD).zip . -x "*.git*" ".gitlab-ci.yml"
+    - echo "Archive created!"
   artifacts:
     paths:
       - "*.zip"
     expire_in: 30 days
   only:
     - main
-
-# ========================================
-# 4. NOTIFY — Success message
-# ========================================
-notify:
-  stage: notify
-  script:
-    - echo "🎉 CI/CD Pipeline completed successfully!"
-    - echo "📂 Repository: https://gitlab.com/stdan248/leeloo"
-    - echo "📦 Artifacts available in the pipeline"
-  needs:
-    - test
-    - package
-  only:
-    - main
-  when: always
