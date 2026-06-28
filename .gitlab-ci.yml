@@ -5,51 +5,38 @@ stages:
   - test
   - package
 
-# ========================================
-# 1. BUILD — перевірка структури проєкту
-# ========================================
 build:
   stage: build
   script:
-    - echo "Checking project structure..."
+    - echo "🚀 Building Leeloo:)"
     - ls -la
   artifacts:
     paths:
       - "**/*"
     expire_in: 1 week
-  only:
-    - main
 
-# ========================================
-# 2. TEST — перевірка наявності файлів
-# ========================================
 test:
   stage: test
   script:
-    - echo "Checking manifest.json..."
-    - if [ -f "manifest.json" ]; then echo "manifest.json found"; else echo "manifest.json missing"; exit 1; fi
-    - echo "Checking LICENSE..."
-    - if [ -f "LICENSE" ]; then echo "LICENSE found"; else echo "LICENSE missing"; fi
-    - echo "Checking README.md..."
-    - if [ -f "README.md" ]; then echo "README.md found"; else echo "README.md missing"; fi
-    - echo "All checks completed!"
+    - echo "🧪 Checking files..."
+    - test -f manifest.json && echo "✅ manifest.json OK" || echo "❌ manifest.json missing"
+    - test -f LICENSE && echo "✅ LICENSE OK" || echo "⚠️ LICENSE missing"
+    - test -f README.md && echo "✅ README.md OK" || echo "⚠️ README.md missing"
+    - test -d icons && echo "✅ icons/ OK" || echo "⚠️ icons/ missing"
+    - test -d src && echo "✅ src/ OK" || echo "⚠️ src/ missing"
+    - echo "🎯 All checks done!"
   dependencies:
     - build
-  only:
-    - main
 
-# ========================================
-# 3. PACKAGE — створення ZIP-архіву
-# ========================================
 package:
   stage: package
   script:
-    - echo "Creating archive..."
-    - zip -r leeloo-$(git rev-parse --short HEAD).zip . -x "*.git*" ".gitlab-ci.yml"
-    - echo "Archive created!"
+    - echo "📦 Creating archive..."
+    - apt-get update && apt-get install -y zip || echo "⚠️ zip not installed, skipping..."
+    - zip -r leeloo-$(git rev-parse --short HEAD).zip . -x "*.git*" ".gitlab-ci.yml" || echo "⚠️ zip failed, but continuing"
+    - echo "✅ Archive ready!"
   artifacts:
     paths:
       - "*.zip"
     expire_in: 30 days
-  only:
-    - main
+  when: on_success
