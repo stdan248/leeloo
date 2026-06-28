@@ -101,13 +101,9 @@ export const DriveStorage = {
       }
     }
 
-    console.log(`[appendSorted] блок: ${filePath}, записів до: ${map.size}, має ${currentNum}: ${map.has(currentNum)}`);
-
     map.set(currentNum, shortWithId.trim());
     const sorted = Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
     const result = sorted.map(([, entry]) => entry).join(SEP);
-
-    console.log(`[appendSorted] записів після: ${map.size}, зберігаємо ${result.length} символів`);
 
     await this.save(rootId, filePath, result);
   },

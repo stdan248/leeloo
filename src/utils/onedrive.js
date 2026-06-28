@@ -5,7 +5,6 @@ const GRAPH = 'https://graph.microsoft.com/v1.0';
 export const OneDriveStorage = {
 
   async getOrCreateFolder(parentId, name) {
-    console.log('[OneDrive] getOrCreateFolder:', parentId, name);
     if (!parentId) throw new Error(`getOrCreateFolder: parentId is undefined for folder "${name}"`);
     const token = await getToken();
 
@@ -57,7 +56,6 @@ export const OneDriveStorage = {
   },
 
   async save(rootId, filePath, content) {
-    console.log('[OneDrive] save:', rootId, filePath);
     const { fileId, parentId, fileName } = await this.findFile(rootId, filePath);
     const token = await getToken();
     const blob = new Blob([content], { type: 'text/plain; charset=utf-8' });
@@ -102,13 +100,9 @@ export const OneDriveStorage = {
       }
     }
 
-    console.log(`[appendSorted] блок: ${filePath}, записів до: ${map.size}, має ${currentNum}: ${map.has(currentNum)}`);
-
     map.set(currentNum, shortWithId.trim());
     const sorted = Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
     const result = sorted.map(([, entry]) => entry).join(SEP);
-
-    console.log(`[appendSorted] записів після: ${map.size}, зберігаємо ${result.length} символів`);
 
     await this.save(rootId, filePath, result);
   },
@@ -136,19 +130,23 @@ export const OneDriveStorage = {
       parentId = await this.getOrCreateFolder(parentId, part);
     }
     const token = await getToken();
-    const res = await fetch(
-      `${GRAPH}/me/drive/items/${parentId}/children?$select=id,name,size,lastModifiedDateTime&$orderby=name`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    const data = await res.json();
-    return (data.value || []).map(f => ({
+    const allFiles = [];
+    let url = `${GRAPH}/me/drive/items/${parentId}/children?$select=id,name,size,lastModifiedDateTime,folder&$top=200`;
+    while (url) {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      allFiles.push(...(data.value || []));
+      url = data['@odata.nextLink'] || null;
+    }
+    return allFiles.map(f => ({
       id:       f.id,
       name:     f.name,
-      size:     f.size,
+      size:     f.folder ? null : (f.size ?? null),
       modified: f.lastModifiedDateTime ? new Date(f.lastModifiedDateTime).getTime() : null,
     }));
   },
 };
+
 
 async function getToken() {
   const saved = await chrome.storage.local.get('mbSettings');

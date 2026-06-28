@@ -57,13 +57,9 @@ export const DropboxStorage = {
       }
     }
 
-    console.log(`[appendSorted] блок: ${filePath}, записів до: ${map.size}, має ${currentNum}: ${map.has(currentNum)}`);
-
     map.set(currentNum, shortWithId.trim());
     const sorted = Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
     const result = sorted.map(([, entry]) => entry).join(SEP);
-
-    console.log(`[appendSorted] записів після: ${map.size}, зберігаємо ${result.length} символів`);
 
     await this.save(rootId, filePath, result);
   },
@@ -113,7 +109,7 @@ export const DropboxStorage = {
     return entries.map(f => ({
       id:       f.id,
       name:     f.name,
-      size:     f.size,
+      size:     f['.tag'] === 'folder' ? null : f.size,
       modified: f.client_modified ? new Date(f.client_modified).getTime() : null,
     }));
   },

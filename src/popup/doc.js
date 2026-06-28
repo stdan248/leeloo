@@ -368,7 +368,7 @@
             title: '6. Контакти',
             content: `
               <h2>6. Контакти та подяка</h2>
-              <p><strong>Створено з любов'ю!</strong><br>Сергій та Люм для Софії та Мили Й. 💛</p>
+              <p><strong>Створено з любов'ю!</strong><br>Сергій та Люм для Софії та Міли Й. 💛</p>
               <p><strong>Контакти:</strong><br>- Email: <a href="mailto:respond2q+leeloo@gmail.com">respond2q+leeloo@gmail.com</a></p>
             `
           }

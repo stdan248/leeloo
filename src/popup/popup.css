@@ -766,7 +766,7 @@ html.theme-light .card .snum { background: var(--snum-bg); border-color: var(--s
 #proc-prefetch-hint {
   background: var(--dark-btn-bg);
   border: 0.5px solid var(--border2);
-  color: var(--prefetch-hint-color);
+  color: var(--dark-btn-text);
   font-weight: 600;
 }
 

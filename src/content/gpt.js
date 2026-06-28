@@ -69,12 +69,12 @@
 
           console.log(`[MB] GPT sidebar scroll: ${count} сесій, стабільно: ${stableFor}`);
 
-          if (stableFor >= 3 || attempts >= MAX_ATTEMPTS) {
+          if (stableFor >= 5 || attempts >= MAX_ATTEMPTS) {
             window.__mbLoadedCount = count;
             console.log(`[MB] GPT: завантажено ${count} сесій`);
             resolve();
           } else {
-            setTimeout(scrollAndCheck, 800);
+            setTimeout(scrollAndCheck, 1200);
           }
         }
 
