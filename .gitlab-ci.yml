@@ -1,3 +1,5 @@
+image: alpine:latest
+
 stages:
   - build
 
@@ -5,5 +7,4 @@ build:
   stage: build
   script:
     - echo "Hello from Leeloo!"
-    - echo "Project files:"
     - ls -la
