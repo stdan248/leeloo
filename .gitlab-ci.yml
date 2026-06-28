@@ -1,42 +1,9 @@
-# Leeloo:) — GitLab CI/CD
-
 stages:
   - build
-  - test
-  - package
 
 build:
   stage: build
   script:
-    - echo "🚀 Building Leeloo:)"
+    - echo "Hello from Leeloo!"
+    - echo "Project files:"
     - ls -la
-  artifacts:
-    paths:
-      - "**/*"
-    expire_in: 1 week
-
-test:
-  stage: test
-  script:
-    - echo "🧪 Checking files..."
-    - test -f manifest.json && echo "✅ manifest.json OK" || echo "❌ manifest.json missing"
-    - test -f LICENSE && echo "✅ LICENSE OK" || echo "⚠️ LICENSE missing"
-    - test -f README.md && echo "✅ README.md OK" || echo "⚠️ README.md missing"
-    - test -d icons && echo "✅ icons/ OK" || echo "⚠️ icons/ missing"
-    - test -d src && echo "✅ src/ OK" || echo "⚠️ src/ missing"
-    - echo "🎯 All checks done!"
-  dependencies:
-    - build
-
-package:
-  stage: package
-  script:
-    - echo "📦 Creating archive..."
-    - apt-get update && apt-get install -y zip || echo "⚠️ zip not installed, skipping..."
-    - zip -r leeloo-$(git rev-parse --short HEAD).zip . -x "*.git*" ".gitlab-ci.yml" || echo "⚠️ zip failed, but continuing"
-    - echo "✅ Archive ready!"
-  artifacts:
-    paths:
-      - "*.zip"
-    expire_in: 30 days
-  when: on_success
