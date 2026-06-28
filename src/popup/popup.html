@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Memory Builder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- HEADER -->
+    <header id="app-header">
+      <div class="hdr-logo">
+        <div class="hdr-logo-icon" id="hdr-logo-icon"></div>
+        <span class="hdr-app-name">Leeloo :) <span class="hdr-sub">— AI memory builder</span></span>
+      </div>
+      <div class="hdr-btns">
+        <button class="btn btn-dark" id="toggle-mode" style="border:none;font-size:12px;padding:5px 13px;border-radius:7px" data-i18n="modeLiteBtn">Легкий</button>
+        <div class="hdr-steps" id="hdr-steps">
+          <div class="hdr-step cur" data-step="0" data-i18n="stepConsent">Згода</div>
+          <div class="hdr-step" data-step="1" data-i18n="stepSettings">Налаштування</div>
+          <div class="hdr-step" data-step="2" data-i18n="stepConfirm">Підтвердження</div>
+          <div class="hdr-step" data-step="3" data-i18n="stepProcessing">Обробка</div>
+          <div class="hdr-step" data-step="4" data-i18n="stepDone">Готово</div>
+        </div>
+        <button class="hdr-btn hdr-btn-active" id="hdr-btn-settings" style="display:none" data-i18n="stepSettings">Налаштування</button>
+      </div>
+      <button class="hdr-theme-btn" id="hdr-btn-info" style="margin-left:6px"></button>
+      <button class="hdr-theme-btn hdr-theme-active" id="hdr-btn-donate"></button>
+      <div class="hdr-lang" style="display:flex;gap:2px;margin-left:6px">
+        <button class="hdr-theme-btn" id="hdr-lang-en" style="width:auto;padding:0 8px;font-size:11px;font-weight:600">EN</button>
+        <button class="hdr-theme-btn hdr-theme-active" id="hdr-lang-ua" style="width:auto;padding:0 8px;font-size:11px;font-weight:600">UA</button>
+      </div>
+      <div class="hdr-theme">
+        <button class="hdr-theme-btn" id="hdr-theme-light"></button>
+        <button class="hdr-theme-btn hdr-theme-active" id="hdr-theme-dark"></button>
+      </div>
+    </header>
+
+    <!-- SCREEN 0: CONSENT -->
+    <section class="screen active" id="scr-0">
+      <div class="card" style="margin-bottom:0">
+        <div class="card-title" style="font-size:15px;font-weight:600;margin-bottom:14px" data-i18n="onboardingTitle">Режим «Легкий»</div>
+        <ol class="consent-list">
+          <li><span class="arrow">1.</span><span data-i18n="onboardingStep1">Запускайте тільки на сторінці вашого АІ — додаток має бути постійно відкритим.</span></li>
+          <li><span class="arrow">2.</span><span data-i18n="onboardingStep2">Отримайте АПІ ключ (<a href="#" id="link-how-to-key" style="color:var(--accent)" data-i18n="onboardingStep2Link">як отримати</a>) та додайте його на головному екрані.</span></li>
+          <li><span class="arrow">3.</span><span data-i18n="onboardingStep3">Оберіть папку, натиснувши «Обрати / Оновити».</span></li>
+          <li style="border-bottom:none">
+            <div style="display:flex; gap:14px; align-items:flex-start">
+              <div class="tree" style="margin-top:2px; flex-shrink:0; white-space:nowrap">&lt;ваша папка&gt;<br>└── Ваша модель АІ/<br>&nbsp;&nbsp;&nbsp;&nbsp;├── full/         → повні тексти<br>&nbsp;&nbsp;&nbsp;&nbsp;├── short/        → стислі записи<br>&nbsp;&nbsp;&nbsp;&nbsp;├── _system/      → службові сесії<br>&nbsp;&nbsp;&nbsp;&nbsp;├── memory.txt    → зміст архіву<br>&nbsp;&nbsp;&nbsp;&nbsp;├── tags.txt      → файл тегів<br>&nbsp;&nbsp;&nbsp;&nbsp;└── books/combined/ → книга розмов</div>
+              <div>
+                <div><span class="arrow">4.</span> <span data-i18n="onboardingStep4">Дочекайтесь завантаження всіх сесій та натисніть «Старт».</span></div>
+                <div style="margin-top:10px"><span class="arrow">5.</span> <span data-i18n="onboardingStep5">Після створення архіву натисніть «Створити книгу».</span></div>
+              </div>
+            </div>
+          </li>
+        </ol>
+        <p class="consent-note" style="margin-top:12px" data-i18n="onboardingNote">Зроблено з любов'ю: Сергій та Люм для Софії та Міли Й.<br>
+        Контакт: <a href="mailto:your@email.com" style="color:var(--accent)">your@email.com</a> &nbsp;·&nbsp;
+        <a href="#" id="link-donate" style="color:var(--accent)">На каву ☕</a></p>
+        <div class="btn-row" style="margin-top:14px; justify-content:flex-end">
+          <button class="btn btn-dark" id="btn-consent-no" data-i18n="btnConsentNo" style="padding:9px 16px;font-size:13px;line-height:normal;border:0.5px solid transparent;box-sizing:border-box">Не зараз</button>
+          <button class="btn btn-primary" id="btn-consent-ok" data-i18n="btnConsentOk">Зрозуміло / Підтверджую</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCREEN 1: SETTINGS -->
+    <section class="screen" id="scr-1">
+
+      <div class="settings-grid">
+
+      <div class="settings-col">
+      <div class="card">
+        <div class="card-head"><div class="snum">1</div>
+          <div><div class="card-title" data-i18n="card1Title">Платформа</div><div class="card-desc" data-i18n="card1Desc">Модель для якої будується архів</div></div>
+        </div>
+        <div class="chip-row" id="plat-row">
+          <button class="chip active" data-v="claude">Claude</button>
+          <button class="chip" data-v="gemini">Gemini</button>
+          <button class="chip" data-v="gpt">GPT</button>
+          <button class="chip" data-v="deepseek">DeepSeek</button>
+          <button class="chip" data-v="other" data-i18n="chipOther">Інша</button>
+        </div>
+        <div class="field hidden" id="plat-name-wrap">
+          <div class="field-label" data-i18n="platNameLabel">Назва моделі</div>
+          <input type="text" id="plat-name" data-i18n-ph="platNamePh" placeholder="введи назву..." />
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="snum">2</div>
+          <div><div class="card-title" data-i18n="card2Title">Хмарне сховище</div><div class="card-desc" data-i18n="card2Desc">Один корінь — структура будується автоматично</div></div>
+        </div>
+        <div class="chip-row" id="stor-row">
+          <button class="chip active" data-v="drive">Google Drive</button>
+          <button class="chip" data-v="onedrive">OneDrive</button>
+          <button class="chip" data-v="dropbox">Dropbox</button>
+          <button class="chip" data-v="local" data-i18n="chipLocal">Локально</button>
+        </div>
+        <div class="field" id="cloud-fields">
+          <div class="field-label" id="stor-label">Google Drive — ID кореневої папки</div>
+          <input type="text" id="cloud-id" placeholder="1AbCdEfGhIjKlMnOpQrStUvW..." />
+        </div>
+        <div class="field" id="token-fields">
+          <div class="field-label">Access Token <a id="token-link" href="https://developers.google.com/oauthplayground" target="_blank" style="font-size:11px;opacity:0.6;margin-left:6px" data-i18n="tokenGet">отримати →</a></div>
+          <input type="password" id="drive-token" placeholder="ya29...." />
+          <div id="token-hint" style="font-size:11px;opacity:0.5;margin-top:3px" data-i18n="tokenHint">Діє ~1 годину. Отримати на OAuth 2.0 Playground → Drive API v3</div>
+        </div>
+        <div class="field hidden" id="local-fields">
+          <div class="field-label" data-i18n="localFolderLabel">Локальна папка</div>
+          <div id="local-path" style="font-size:12px;opacity:0.7;padding:6px 8px;background:var(--bg3);border-radius:6px;min-height:28px;border:0.5px solid var(--border)" data-i18n="localFolderNone">Папку не обрано</div>
+          <button class="btn btn-dark full" id="btn-pick-folder" data-i18n="btnPickFolder" style="margin-top:6px;font-size:13px;padding:7px 10px">📁 Обрати / Відновити доступ</button>
+          <div id="pro-cloud-only-hint" style="display:none;margin-top:6px;font-size:12px;color:var(--warn);align-items:center;gap:4px"><span id="pro-icon-cloud-warn" style="width:12px;height:12px;display:inline-flex;flex-shrink:0"></span><span id="pro-cloud-only-text"></span></div>
+          <div id="restore-access-hint" style="display:none;font-size:11px;color:var(--warn);margin-top:5px;padding:5px 8px;background:var(--bg3);border-radius:5px;border-left:3px solid var(--warn)" data-i18n="restoreHint">
+            ⚠ Увага — відновіть доступ для запису на диск!
+          </div>
+          <div style="font-size:11px;opacity:0.5;margin-top:3px" data-i18n="browserConfirm">Браузер запросить підтвердження доступу при кожному запуску</div>
+        </div>
+
+        <!-- SYNC BLOCK — видимий тільки при local -->
+        <div class="field hidden" id="sync-fields" style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
+          <div class="field-label" style="margin-bottom:6px" data-i18n="syncTitle">Синхронізація з хмарою</div>
+          <div class="chip-row" id="sync-cloud-row" style="margin-bottom:8px">
+            <button class="chip active" data-v="drive">Google Drive</button>
+            <button class="chip" data-v="onedrive">OneDrive</button>
+            <button class="chip" data-v="dropbox">Dropbox</button>
+          </div>
+          <div id="sync-cloud-id-wrap"></div>
+          <div class="btn-row" style="margin-top:10px">
+            <button class="btn btn-sm" id="btn-sync-analyze" data-i18n="btnSyncAnalyze">🔍 Аналіз</button>
+            <button class="btn btn-sm" id="btn-sync-to-cloud" disabled data-i18n="btnSyncToCloud">Local ↑ Cloud</button>
+            <button class="btn btn-sm" id="btn-sync-to-local" disabled data-i18n="btnSyncToLocal">Cloud ↓ Local</button>
+          </div>
+          <div id="sync-status" style="display:none;font-size:12px;margin-top:8px;padding:6px;background:var(--bg3);border-radius:6px;word-break:break-all;overflow-wrap:break-word"></div>
+        </div>
+        <div class="tree hidden" id="tree-preview"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="snum">3</div>
+          <div><div class="card-title" data-i18n="card23Title">Вибір сесій</div><div class="card-desc" data-i18n="card23Desc">Які сесії обробити</div></div>
+        </div>
+        <div class="chip-row" id="mode-row">
+          <button class="chip" data-v="new" data-i18n="chipNew">Нові сесії</button>
+          <button class="chip active" data-v="auto" data-i18n="chipAuto">Автоматично</button>
+          <button class="chip" data-v="all" data-i18n="chipAll">Всі</button>
+          <button class="chip" data-v="select" data-i18n="chipSelect">Вибрати</button>
+        </div>
+        <div class="info-box" id="mode-info">Перевіряє наявні фули і заповнює пропуски в архіві.</div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="skip-last" />
+          <span data-i18n="skipLast">Пропускати останню (поточну) сесію</span>
+        </label>
+        <div class="hidden" id="select-panel">
+          <div class="two-col" style="margin-top:10px">
+            <div class="field"><div class="field-label" data-i18n="rangeFrom">Від</div><input type="number" id="r-from" value="1" min="1" /></div>
+            <div class="field"><div class="field-label" data-i18n="rangeTo">До</div><input type="number" id="r-to" value="30" min="1" /></div>
+          </div>
+          <div class="sess-grid" id="sess-grid"></div>
+          <div class="legend">
+            <div class="leg"><div class="leg-dot filled"></div><span data-i18n="legendSelected">Вибрано</span></div>
+            <div class="leg"><div class="leg-dot muted"></div><span data-i18n="legendExists">Вже є</span></div>
+            <div class="leg"><div class="leg-dot"></div><span data-i18n="legendNew">Нова</span></div>
+          </div>
+        </div>
+      </div>
+      </div>
+
+      <div class="settings-col">
+      <div class="card">
+        <div class="card-head"><div class="snum">4</div>
+          <div><div class="card-title" data-i18n="card21Title">AI для генерації шортів</div><div class="card-desc" data-i18n="card21Desc">Модель, що стискає сесії в короткі підсумки</div></div>
+        </div>
+        <div class="chip-row" id="ai-row">
+          <button class="chip active" data-v="claude">Claude</button>
+          <button class="chip" data-v="gemini">Gemini</button>
+          <button class="chip" data-v="gpt">GPT</button>
+          <button class="chip" data-v="deepseek">DeepSeek</button>
+          <button class="chip" data-v="openrouter">OpenRouter</button>
+          <button class="chip" data-v="qwen">Qwen</button>
+          <button class="chip" data-v="huggingface">HuggingFace</button>
+          <button class="chip" data-v="mistral">Mistral</button>
+          <button class="chip" data-v="groq">Groq</button>
+        </div>
+        <div class="field hidden" id="model-select-wrap">
+          <div class="field-label" style="display:flex;justify-content:space-between;align-items:center">
+            <span id="model-select-label" data-i18n="modelLabel">Модель</span>
+            <button class="btn btn-sm" id="btn-refresh-models" title="Оновити список моделей" style="font-size:11px;padding:2px 8px" data-i18n="btnRefreshModels">↻ Оновити</button>
+          </div>
+          <select id="model-select" style="width:100%;margin-bottom:6px"></select>
+          <input type="text" id="model-custom" data-i18n-ph="modelCustomPh" placeholder="або введіть ID моделі вручну" class="hidden" />
+        </div>
+        <div class="field">
+          <div class="field-label" id="api-key-label">API key <a id="api-key-link" href="https://aistudio.google.com/app/apikey" target="_blank" style="font-size:11px;opacity:0.6;margin-left:6px" data-i18n="apiKeyGet">отримати →</a></div>
+          <input type="password" id="api-key" placeholder="sk-ant-..." style="width:100%" />
+          <button class="btn btn-dark full" id="btn-check-limit" data-i18n="btnCheckLimit" style="margin-top:6px;font-size:13px;padding:7px 10px">Перевірити ліміт</button>
+          <div id="limit-status" style="font-size:11px;margin-top:4px;display:none"></div>
+        </div>
+        <div class="field">
+          <div class="field-label" data-i18n="delayLabel">Затримка між шортами (сек)</div>
+          <input type="number" id="short-delay" value="65" min="1" max="120" />
+          <div style="font-size:11px;opacity:0.5;margin-top:3px" data-i18n="delayHint">Gemini Free: 65+ сек. Claude/GPT/DeepSeek/OpenRouter: 5-10 сек.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="snum">5</div>
+          <div><div class="card-title" data-i18n="card22Title">Нумерація сесій</div><div class="card-desc" data-i18n="card22Desc">Номер додається перед початком обробки</div></div>
+        </div>
+        <div class="info-box" data-i18n="card22Example">Приклад: <em>"full_001"</em>, <em>"short_001"</em></div>
+        <div class="two-col">
+          <div class="field"><div class="field-label" data-i18n="numStart">Починати з</div><input type="number" id="num-start" value="1" min="1" /></div>
+          <div class="field"><div class="field-label" data-i18n="numDigits">Знаків</div><input type="number" id="num-digits" value="3" min="2" max="5" /></div>
+        </div>
+      </div>
+
+      </div>
+
+      <div class="settings-col">
+      <div class="card">
+        <div class="card-head"><div class="snum">6</div>
+          <div><div class="card-title" data-i18n="card25Title">Формат шортів</div><div class="card-desc" data-i18n="card25Desc">Окремі файли, блоки або обидва</div></div>
+        </div>
+        <div class="chip-row" id="short-format-row">
+          <button class="chip" data-v="singles" data-i18n="chipSingles">Окремі файли</button>
+          <button class="chip" data-v="blocks" data-i18n="chipBlocks">Блоки</button>
+          <button class="chip active" data-v="both" data-i18n="chipBoth">Обидва</button>
+        </div>
+        <div class="info-box" id="short-format-info">Зберігає short_NNN.txt і блоки short_NNN-MMM.txt.</div>
+        <div id="block-size-wrap" style="margin-top:8px">
+          <div class="field">
+            <div class="field-label" data-i18n="blockSizeLabel">Розмір блоку (сесій)</div>
+            <input type="number" id="block-size" value="50" min="10" max="500" step="10" />
+          </div>
+        </div>
+        <div id="short-format-warn" style="display:none;font-size:12px;color:var(--warn);margin-top:6px;padding:6px;background:var(--bg3);border-radius:6px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="snum">7</div>
+          <div><div class="card-title" data-i18n="card3Title">Ліміт архіву</div><div class="card-desc" data-i18n="card3Desc">Новий файл при досягненні порогу</div></div>
+        </div>
+        <div class="two-col">
+          <div class="field"><div class="field-label" data-i18n="archSizeLabel">Розмір файлу (MB)</div><input type="number" id="arch-size" value="2" min="0.5" max="50" step="0.5" /></div>
+          <div class="field"><div class="field-label" data-i18n="archFormatLabel">Формат</div><input type="text" value="full_001-099.txt" readonly class="muted" /></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="snum">8</div>
+          <div><div class="card-title" data-i18n="card24Title">Режим архівування</div><div class="card-desc" data-i18n="card24Desc">Що саме обробляти</div></div>
+        </div>
+        <div class="chip-row" id="archive-mode-row">
+          <button class="chip active" data-v="full" data-i18n="chipFull">Повний</button>
+          <button class="chip" data-v="full_only" data-i18n="chipFullOnly">Тільки фули</button>
+          <button class="chip" data-v="shorts_only" data-i18n="chipShortsOnly">Тільки шорти</button>
+        </div>
+        <div class="info-box" id="archive-mode-info">Зберігає фули і генерує шорти.</div>
+      </div>
+      </div>
+      </div>
+
+      <div class="settings-grid bottom-row" style="margin-top:14px">
+        <div class="settings-col" style="display:flex">
+        </div>
+        <div class="settings-col" style="display:flex">
+          <div id="prefetch-hint" style="display:none;font-size:13px;color:var(--prefetch-hint-color);text-align:center;padding:9px 16px;border-radius:var(--r);background:var(--bg2);width:100%;box-sizing:border-box;line-height:1.4"></div>
+        </div>
+        <div class="settings-col" style="display:flex">
+          <button class="btn btn-primary" id="btn-to-confirm" data-i18n="btnToConfirm" style="width:100%">Далі — підтвердження →</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCREEN 2: CONFIRM -->
+    <section class="screen" id="scr-2" style="margin-bottom:-14px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start">
+
+        <div>
+          <div class="card">
+            <div class="card-head"><div class="snum"></div>
+              <div><div class="card-title" data-i18n="confirmTitle">Підтвердження</div><div class="card-desc" data-i18n="confirmDesc">Перевір перед запуском</div></div>
+            </div>
+            <table class="confirm-table" id="confirm-table"></table>
+          </div>
+        </div>
+
+        <div>
+        <div class="card">
+          <div class="card-head"><div class="snum"></div>
+            <div><div class="card-title" data-i18n="bookTitle">Створити книгу</div><div class="card-desc" data-i18n="bookDesc">Компіляція архіву в єдину книгу</div></div>
+          </div>
+          <div class="checkbox-group">
+            <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
+              <input type="checkbox" id="book-tags" checked />
+              <span data-i18n="bookTags">Книга тегів</span> <span style="font-size:11px;opacity:0.5;margin-left:4px">→ books/tags/</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
+              <input type="checkbox" id="book-memory" checked />
+              <span data-i18n="bookMemory">Книга змісту</span> <span style="font-size:11px;opacity:0.5;margin-left:4px">→ books/memory/</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
+              <input type="checkbox" id="book-shorts" checked />
+              <span data-i18n="bookShorts">Книга шортів</span> <span style="font-size:11px;opacity:0.5;margin-left:4px">→ books/short/</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
+              <input type="checkbox" id="book-fulls" checked />
+              <span data-i18n="bookFulls">Книга фулів</span> <span style="font-size:11px;opacity:0.5;margin-left:4px">→ books/full/</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="book-combined" />
+              <span data-i18n="bookCombined">Сублімована книга (все разом)</span> <span style="font-size:11px;opacity:0.5;margin-left:4px">→ books/combined/</span>
+            </label>
+          </div>
+          <div class="field" style="margin-top:12px">
+            <div class="field-label" data-i18n="bookMaxSizeLabel">Максимальний розмір файлу (МБ)</div>
+            <input type="number" id="book-max-size" data-i18n-ph="bookMaxSizePh" placeholder="без обмежень" min="0.5" step="0.5" />
+            <div style="font-size:11px;opacity:0.5;margin-top:3px" data-i18n="bookMaxSizeHint">Залишіть порожнім для одного файлу без обмежень</div>
+          </div>
+          <div class="btn-row" style="margin-top:6px">
+            <button class="btn btn-dark full" id="btn-create-book" data-i18n="btnCreateBook" style="padding:9px 16px;font-size:13px">Створити книгу</button>
+          </div>
+        </div>
+        <div class="btn-row" style="margin-top:6px;justify-content:center">
+          <button class="btn btn-dark" id="btn-back" data-i18n="btnBack" style="flex:1;text-align:center;padding:9px 16px;font-size:13px">Назад</button>
+          <button class="btn btn-primary" id="btn-run" data-i18n="btnRun" style="flex:1;text-align:center">Створити архів</button>
+        </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- SCREEN 3: PROCESSING -->
+    <section class="screen" id="scr-3" style="margin-bottom:-14px">
+      <div class="card">
+        <div class="card-head"><div class="snum"></div>
+          <div><div class="card-title" data-i18n="procTitle">Обробка</div><div class="card-desc" data-i18n="procDesc">Нумерація → фул → шорт → memory.txt → промпт</div></div>
+        </div>
+        <div class="status-bar">
+          <div class="dot idle" id="s-dot"></div>
+          <span id="s-text" data-i18n="initStatus">Ініціалізація...</span>
+        </div>
+        <div class="limit-banner hidden" id="limit-banner">
+          <div class="limit-title" data-i18n="limitTitle">Ліміт моделі досягнуто</div>
+          <div class="limit-sub"><span data-i18n="limitSub">Прогрес збережено. Автовідновлення через</span> <strong id="countdown">60:00</strong></div>
+          <div class="btn-row" style="margin-top:8px">
+            <button class="btn btn-sm" id="btn-resume" data-i18n="btnResume">Продовжити зараз</button>
+            <button class="btn btn-sm" id="btn-stop" data-i18n="btnStop">Зупинити</button>
+          </div>
+        </div>
+        <div class="progress-wrap">
+          <div class="prog-meta">
+            <span id="prog-label">0 / 0 сесій</span>
+            <span id="prog-arch">архів: —</span>
+            <span id="prog-pct">0%</span>
+          </div>
+          <div class="prog-bg"><div class="prog-fill" id="prog-fill"></div></div>
+        </div>
+        <div class="arch-chips" id="arch-chips"></div>
+        <div class="log-box" id="log-box"></div>
+        <div class="btn-row" style="margin-top:8px;align-items:center;gap:8px">
+          <div id="proc-prefetch-hint" style="display:none;font-size:13px;color:var(--prefetch-hint-color);padding:7px 12px;border-radius:var(--r);background:var(--bg2);flex:1;box-sizing:border-box;line-height:1.4"></div>
+          <button class="btn btn-dark" id="btn-stop-main" data-i18n="btnStopMain" style="padding:9px 16px;font-size:13px;margin-left:auto">⏹ Зупинити</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCREEN 4: DONE -->
+    <section class="screen" id="scr-4" style="margin-bottom:-14px">
+      <div class="card">
+        <div class="card-head">
+          <div class="snum"></div>
+          <div><div class="card-title" data-i18n="doneTitle">Готово</div><div class="card-desc" data-i18n="doneDesc">Системний промпт оновлено автоматично</div></div>
+        </div>
+        <div class="done-badges" id="done-badges"></div>
+        <div class="field-label" style="margin-bottom:6px" data-i18n="donePromptLabel">Цей текст можна додати до системного промпту АІ</div>
+        <div class="mem-box" id="mem-prompt"></div>
+        <div class="btn-row" style="margin-top:6px">
+          <button class="btn btn-dark" id="btn-copy-prompt" data-i18n="btnCopyPrompt" style="flex:1;font-size:13px;padding:9px 16px;text-align:center">Скопіювати</button>
+          <button class="btn btn-primary" id="btn-new-archive" data-i18n="btnNewArchive" style="flex:1;font-size:13px;padding:9px 16px;text-align:center;color:#f6f1eb">Новий архів</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="scr-lite">
+      <div class="lg">
+
+        <!-- Платформа -->
+        <div class="card lc">
+          <div class="card-head">
+            <div class="snum" id="lite-icon-platform"></div>
+            <div><div class="card-title" data-i18n="litePlatTitle">Платформа</div><div class="card-desc" data-i18n="litePlatDesc">Для якої моделі будується архів</div></div>
+          </div>
+          <div class="chip-row" id="lite-plat-row">
+            <button class="chip active" data-v="claude">Claude</button>
+            <button class="chip" data-v="gemini">Gemini</button>
+            <button class="chip" data-v="gpt">GPT</button>
+            <button class="chip" data-v="deepseek">DeepSeek</button>
+            <button class="chip" data-v="other" data-i18n="chipOther">Інша</button>
+          </div>
+          <div class="field hidden" id="lite-plat-name-wrap">
+            <input type="text" id="lite-plat-name" data-i18n-ph="litePlatPh" placeholder="введіть назву..." />
+          </div>
+        </div>
+
+        <!-- Mistral API ключ -->
+        <div class="card lc">
+          <div class="card-head">
+            <div class="snum" id="lite-icon-key"></div>
+            <div><div class="card-title" data-i18n="liteKeyTitle">Mistral API ключ</div><div class="card-desc" data-i18n="liteKeyDesc">Безкоштовний — без кредитки</div></div>
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <input type="password" id="lite-api-key" data-i18n-ph="liteKeyPh" placeholder="Вставте ключ..." style="flex:1;min-width:0" />
+            <button class="btn btn-sm" id="lite-btn-onboarding" data-i18n="btnGetKey">Отримати</button>
+          </div>
+          <button class="btn btn-dark full" id="lite-btn-check-key" data-i18n="btnCheckKey">Перевірити ключ</button>
+          <div id="lite-key-status" style="font-size:11px;margin-top:4px;display:none"></div>
+        </div>
+
+        <!-- Локальна папка (повна ширина) -->
+        <div class="card lc lf">
+          <div class="card-head">
+            <div class="snum" id="lite-icon-folder"></div>
+            <div><div class="card-title" data-i18n="liteFolderTitle">Локальна папка</div><div class="card-desc" data-i18n="liteFolderDesc">Куди зберігати архів</div></div>
+          </div>
+          <div class="lf-row">
+            <div class="lf-icon" id="lite-icon-folder-open"></div>
+            <div style="flex:1;min-width:0">
+              <div id="lite-local-path" class="lf-path" style="display:none"></div>
+              <div class="lf-hint" data-i18n="liteFolderHint">Перетягніть папку сюди або натисніть, щоб обрати</div>
+            </div>
+            <button class="btn btn-primary" id="lite-btn-pick-folder" data-i18n="liteFolderBtn">Обрати / Оновити доступ</button>
+          </div>
+          <div id="lite-restore-hint" class="lf-warn" style="display:none">
+            <span id="lite-icon-warn"></span><span id="lite-restore-hint-text">Увага — відновіть доступ для запису на диск!</span>
+          </div>
+          <div id="lite-open-hint" class="lf-warn" style="display:none;margin-top:6px"></div>
+          <div id="lite-cloud-only-hint" class="lf-warn" style="display:none;margin-top:6px"><span id="lite-icon-cloud-warn"></span><span id="lite-cloud-only-text"></span></div>
+        </div>
+
+        <!-- Прогрес (повна ширина, прихований) -->
+        <div class="lf" id="lite-progress-outer" style="display:none;margin-top:-6px">
+          <div class="status-bar" id="lite-status-bar">
+            <div class="dot idle" id="lite-s-dot"></div>
+            <span id="lite-s-text" data-i18n="initStatus">Ініціалізація...</span>
+          </div>
+          <div class="progress-wrap" id="lite-progress-wrap" style="margin-top:8px">
+            <div class="prog-meta">
+              <span id="lite-prog-label">0 / 0 сесій</span>
+              <span id="lite-prog-pct">0%</span>
+            </div>
+            <div class="prog-bg"><div class="prog-fill" id="lite-prog-fill"></div></div>
+          </div>
+          <div class="log-box" id="lite-log-box" style="margin-top:6px;display:none"></div>
+        </div>
+
+        <!-- Кнопки дій (повна ширина) -->
+        <div class="lf la" style="margin-top:-2px">
+          <div class="settings-grid bottom-row" style="margin-top:0">
+            <div class="settings-col" style="display:flex">
+              <button class="btn full" id="lite-btn-book" style="width:100%"><span id="lite-icon-book"></span><span id="lite-btn-book-text"> Створити книгу</span></button>
+            </div>
+            <div class="settings-col" style="display:flex">
+              <div id="lite-sessions-hint" style="font-size:14px;font-weight:600;text-align:center;padding:9px 16px;display:none;color:var(--text3);border-radius:14px;background:var(--bg2);width:100%;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:0.5px solid transparent;line-height:1.2;align-items:center;justify-content:center;gap:6px"><span id="lite-icon-hourglass"></span><span data-i18n="prefetchLoading">Завантаження...</span></div>
+              <div id="lite-prefetch-hint" style="display:none;font-size:14px;font-weight:600;color:var(--prefetch-hint-color);text-align:center;padding:9px 16px;border-radius:14px;background:var(--bg2);width:100%;box-sizing:border-box;border:0.5px solid transparent;line-height:1.2"></div>
+            </div>
+            <div class="settings-col" style="display:flex">
+              <button class="btn btn-primary la-btn" id="lite-btn-start" style="width:100%"><span id="lite-icon-play"></span><span id="lite-btn-start-text"> Старт</span></button>
+            </div>
+          </div>
+          <div id="lite-book-status" style="font-size:12px;margin-top:6px;display:none;text-align:center"></div>
+        </div>
+
+      </div>
+      </div>
+    </section>
+
+  </div>
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Конфлікти синхронізації</title>
+  <link rel="stylesheet" href="popup.css" />
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; box-sizing: border-box; }
+    body { padding: 16px; display: flex; flex-direction: column; }
+
+    .conflict-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .conflict-title { font-size: 15px; font-weight: 600; }
+    .conflict-count { font-size: 12px; opacity: 0.5; }
+
+    .mass-btns {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .mass-btns span { font-size: 12px; opacity: 0.6; align-self: center; margin-right: 4px; }
+
+    .table-wrap {
+      flex: 1;
+      overflow-y: auto;
+      margin-bottom: 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      background: var(--bg2);
+      padding: 6px 8px;
+      text-align: left;
+      font-size: 11px;
+      opacity: 0.7;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+    thead th:hover { opacity: 1; }
+    thead th .sort-arrow { margin-left: 4px; opacity: 0.4; }
+    thead th.sorted .sort-arrow { opacity: 1; }
+
+    tbody tr { background: var(--bg2); }
+    tbody tr:nth-child(even) { background: var(--bg3); }
+    tbody tr:hover { background: var(--bg3); }
+
+    tbody td {
+      padding: 6px 8px;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    td.col-name {
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0.85;
+    }
+    td.col-size-local, td.col-date-local { color: var(--info, #2196F3); }
+    td.col-size-cloud, td.col-date-cloud { color: var(--ok, #4CAF50); }
+    td.col-size-local, td.col-size-cloud,
+    td.col-date-local, td.col-date-cloud { opacity: 0.75; font-size: 11px; }
+
+    .filter-btns {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .filter-btns button { font-size: 11px; }
+    .active-filter {
+      outline: 1px solid var(--accent);
+      opacity: 1 !important;
+    }
+
+    .dir-btn {
+      padding: 3px 10px;
+      border-radius: 4px;
+      border: 1px solid var(--border2);
+      background: transparent;
+      color: var(--text);
+      font-size: 11px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .dir-btn:hover { background: var(--bg3); }
+    .dir-btn.active-cloud {
+      background: var(--ok, #4CAF50);
+      border-color: var(--ok, #4CAF50);
+      color: #fff;
+    }
+    .dir-btn.active-local {
+      background: var(--info, #2196F3);
+      border-color: var(--info, #2196F3);
+      color: #fff;
+    }
+    .dir-btn.active-skip {
+      background: var(--bg3);
+      border-color: var(--border2);
+      color: var(--text3);
+    }
+
+    .footer {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+
+    .summary {
+      font-size: 11px;
+      opacity: 0.5;
+      align-self: center;
+      flex: 1;
+    }
+
+    #status {
+      font-size: 12px;
+      margin-bottom: 10px;
+      padding: 6px 10px;
+      background: var(--bg2);
+      border-radius: 6px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="conflict-header">
+    <div class="conflict-title">⚡ Конфлікти синхронізації</div>
+    <div class="conflict-count" id="conflict-count"></div>
+  </div>
+
+  <div class="mass-btns">
+    <span>Всі:</span>
+    <button class="btn btn-sm" id="btn-all-local">↓ На диск</button>
+    <button class="btn btn-sm" id="btn-all-cloud">↑ В хмару</button>
+    <button class="btn btn-sm" id="btn-all-skip">— Пропустити</button>
+  </div>
+
+  <div class="filter-btns">
+    <button class="btn btn-sm" data-filter="local-bigger">💻 Більші на диску</button>
+    <button class="btn btn-sm" data-filter="cloud-bigger">☁ Більші в хмарі</button>
+    <button class="btn btn-sm" data-filter="local-newer">💻 Новіші на диску</button>
+    <button class="btn btn-sm" data-filter="cloud-newer">☁ Новіші в хмарі</button>
+  </div>
+
+  <div class="table-wrap">
+    <table id="conflict-table">
+      <thead>
+        <tr>
+          <th data-col="name">Файл <span class="sort-arrow">↕</span></th>
+          <th data-col="localSize">💻 Розмір <span class="sort-arrow">↕</span></th>
+          <th data-col="localModified">💻 Дата <span class="sort-arrow">↕</span></th>
+          <th data-col="cloudSize">☁ Розмір <span class="sort-arrow">↕</span></th>
+          <th data-col="cloudModified">☁ Дата <span class="sort-arrow">↕</span></th>
+          <th>Дія</th>
+        </tr>
+      </thead>
+      <tbody id="conflict-list"></tbody>
+    </table>
+  </div>
+
+  <div id="status"></div>
+
+  <div class="footer">
+    <div class="summary" id="summary"></div>
+    <button class="btn btn-secondary" id="btn-cancel">Скасувати</button>
+    <button class="btn btn-primary" id="btn-apply">Синхронізувати</button>
+  </div>
+
+  <script src="conflict.js" type="module"></script>
+</body>
+</html>
