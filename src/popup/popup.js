@@ -615,6 +615,7 @@ function bindLiteEvents() {
   };
 
   let liteRunning = false;
+  const setLitePlayIcon = (mode) => { const e = document.getElementById('lite-icon-play'); if (e) e.innerHTML = icon(mode === 'stop' ? 'square' : 'play'); };
   let liteStopping = false;
   let liteSwTimer = null;
   let liteSwTimerSec = 0;
@@ -625,6 +626,7 @@ function bindLiteEvents() {
     if (ps.processingState?.running) {
       liteRunning = true;
       { const _st = document.getElementById('lite-btn-start-text'); if (_st) _st.textContent = ' ' + t('btnStop2'); }
+      setLitePlayIcon('stop');
       startBtn.style.background = 'var(--warn,#FF9800)';
       liteSetStatus('Обробка...', 'run');
     } else {
@@ -632,6 +634,7 @@ function bindLiteEvents() {
       liteStopping = false;
       clearInterval(liteSwTimer); liteSwTimer = null;
       { const st = document.getElementById('lite-btn-start-text'); if (st) st.textContent = ' ' + t('btnStart'); }
+      setLitePlayIcon('play');
       startBtn.style.background = '';
       startBtn.disabled = false;
       if (ps.processingState?.stopped) liteSetStatus('Зупинено', 'warn');
@@ -645,6 +648,7 @@ function bindLiteEvents() {
       liteStopping = true;
       clearInterval(liteSwTimer); liteSwTimer = null;
       { const _st = document.getElementById('lite-btn-start-text'); if (_st) _st.textContent = ' ' + t('btnStopping'); }
+      setLitePlayIcon('stop');
       startBtn.disabled = true;
       chrome.runtime.sendMessage({ type: 'STOP_PROCESSING' });
       return;
@@ -662,6 +666,7 @@ function bindLiteEvents() {
 
     liteRunning = true;
     { const _st = document.getElementById('lite-btn-start-text'); if (_st) _st.textContent = ' ' + t('btnStop2'); }
+    setLitePlayIcon('stop');
     startBtn.style.background = 'var(--warn,#FF9800)';
     liteSetStatus('Обробка...', 'run');
 
@@ -675,6 +680,7 @@ function bindLiteEvents() {
       liteLog(result.error, 'err');
       liteRunning = false;
       { const st = document.getElementById('lite-btn-start-text'); if (st) st.textContent = ' ' + t('btnStart'); }
+      setLitePlayIcon('play');
       startBtn.style.background = '';
       return;
     }
@@ -705,6 +711,7 @@ function bindLiteEvents() {
         clearInterval(liteSwTimer); liteSwTimer = null;
         liteRunning = false; liteStopping = false;
         { const st = document.getElementById('lite-btn-start-text'); if (st) st.textContent = ' ' + t('btnStart'); }
+        setLitePlayIcon('play');
         startBtn.style.background = '';
         startBtn.disabled = false;
         liteSetStatus('Готово ✓', 'ok');
@@ -714,6 +721,7 @@ function bindLiteEvents() {
         clearInterval(liteSwTimer); liteSwTimer = null;
         liteRunning = false; liteStopping = false;
         { const st = document.getElementById('lite-btn-start-text'); if (st) st.textContent = ' ' + t('btnStart'); }
+        setLitePlayIcon('play');
         startBtn.style.background = '';
         startBtn.disabled = false;
         liteSetStatus('Зупинено', 'warn');
@@ -721,6 +729,7 @@ function bindLiteEvents() {
       case 'ERROR_STOP':
         liteRunning = false; liteStopping = false;
         { const st = document.getElementById('lite-btn-start-text'); if (st) st.textContent = ' ' + t('btnStart'); }
+        setLitePlayIcon('play');
         startBtn.style.background = '';
         startBtn.disabled = false;
         liteSetStatus('Помилка', 'err');
@@ -730,6 +739,7 @@ function bindLiteEvents() {
       case 'STORAGE_ERROR':
         liteRunning = false; liteStopping = false;
         { const st = document.getElementById('lite-btn-start-text'); if (st) st.textContent = ' ' + t('btnStart'); }
+        setLitePlayIcon('play');
         startBtn.style.background = '';
         startBtn.disabled = false;
         liteSetStatus('Помилка збереження', 'err');
@@ -902,7 +912,11 @@ function applyLang() {
   const bookText = document.getElementById('lite-btn-book-text');
   if (bookText) bookText.textContent = ' ' + t('btnBook');
   const startText = document.getElementById('lite-btn-start-text');
-  if (startText) startText.textContent = ' ' + t('btnStart');
+  if (startText) {
+    chrome.storage.local.get('processingState').then(ps => {
+      if (!ps.processingState?.running) startText.textContent = ' ' + t('btnStart');
+    });
+  }
 
   // Динамічно оновити словникові тексти
   const toggleModeBtn = $('toggle-mode');
@@ -916,6 +930,11 @@ function applyLang() {
   if (progLabel) {
     const parts = progLabel.textContent.match(/^(\d+) \/ (\d+)/);
     if (parts) progLabel.textContent = `${parts[1]} / ${parts[2]} ${t('sessionsOf')}`;
+  }
+  const liteProgLabel = $('lite-prog-label');
+  if (liteProgLabel) {
+    const liteParts = liteProgLabel.textContent.match(/^(\d+) \/ (\d+)/);
+    if (liteParts) liteProgLabel.textContent = `${liteParts[1]} / ${liteParts[2]} ${t('sessionsOf')}`;
   }
   const progArch = $('prog-arch');
   if (progArch && progArch.textContent) {
