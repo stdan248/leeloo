@@ -1,7 +1,34 @@
-# Memory Builder
+# Leeloo :) — AI Memory Builder
 
-Браузерне розширення для автоматизації архіву пам'яті ШІ-моделей.  
-Підтримує Claude, Gemini, GPT та інші моделі.
+**Never lose a conversation with AI again.** Leeloo is a Chrome extension that automatically archives your Claude, Gemini, ChatGPT, and DeepSeek conversations — full transcripts, smart summaries, and searchable memory — straight to your own storage: Google Drive, Dropbox, OneDrive, or local disk.
+
+No cloud lock-in. No third-party server reading your chats. Your conversations stay yours.
+
+## Why Leeloo
+
+- 🗂️ **Multi-platform archiving** — Claude, Gemini, ChatGPT, DeepSeek (and more via "Other")
+- ☁️ **Your storage, your rules** — Google Drive, OneDrive, Dropbox, or fully local
+- 🧠 **Smart memory, not just backup** — auto-generates tagged summaries per session and a running `memory.txt` index of the whole archive
+- 🤖 **Bring your own AI for summaries** — pick any model to generate the shorts, independent of which platform you're archiving: Claude, Gemini, GPT, DeepSeek, OpenRouter, Qwen, HuggingFace, Mistral, Groq
+- 🔄 **Self-updating context** — automatically inserts the memory archive into the model's system prompt on every session, so the AI you're talking to actually knows its own history with you
+- ⚡ **Lite mode** — single-screen, minimal setup, local-only, for when you just want it to work
+- 🇺🇦 🇬🇧 Full UA/EN localization, dark theme
+
+## Demo
+
+📺 [Watch the demo video](https://youtu.be/BnSpNMiTV-M)
+
+![Leeloo Lite mode popup](src/img/docs/2.1.png)
+
+## Installation
+
+### Chrome / Edge / Brave
+
+1. Download or clone this repository
+2. Open `chrome://extensions/`
+3. Enable **Developer mode** (top right)
+4. Click **Load unpacked**
+5. Select the `leeloo/` folder
 
 ---
 
@@ -13,18 +40,6 @@
 4. Веде `memory.txt` — короткий зміст усього архіву
 5. Записує службові сесії в `_system/` (окремо від архіву)
 6. Автоматично оновлює системний промпт моделі при кожному запуску
-
----
-
-## Встановлення
-
-### Chrome / Edge / Brave
-
-1. Завантажте або клонуйте цей репозиторій
-2. Відкрийте `chrome://extensions/`
-3. Увімкніть **Режим розробника** (правий верхній кут)
-4. Натисніть **Завантажити нерозпаковане розширення**
-5. Виберіть папку `memory-builder/`
 
 ---
 
@@ -41,6 +56,12 @@
 | Claude | console.anthropic.com → API Keys |
 | Gemini | aistudio.google.com → Get API key |
 | GPT | platform.openai.com → API keys |
+| DeepSeek | platform.deepseek.com → API keys |
+| OpenRouter | openrouter.ai → Keys |
+| Qwen | dashscope.console.aliyun.com → API keys |
+| HuggingFace | huggingface.co → Settings → Access Tokens |
+| Mistral | console.mistral.ai → API keys |
+| Groq | console.groq.com → API keys |
 
 ---
 
@@ -111,5 +132,5 @@
 ## Підтримувані платформи
 
 - **Браузери:** Chrome, Edge, Brave (Manifest V3)
-- **Моделі:** Claude (claude.ai), Gemini (gemini.google.com), ChatGPT (chatgpt.com)
-- **Сховища:** Google Drive, OneDrive, Dropbox
+- **Моделі:** Claude (claude.ai), Gemini (gemini.google.com), ChatGPT (chatgpt.com), DeepSeek (chat.deepseek.com)
+- **Сховища:** Google Drive, OneDrive, Dropbox, локально
