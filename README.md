@@ -32,26 +32,26 @@ No cloud lock-in. No third-party server reading your chats. Your conversations s
 
 ---
 
-## Що робить
+## What it does
 
-1. Нумерує всі сесії розмов
-2. Зберігає повні тексти у `full/`
-3. Автоматично генерує стислі записи з тегами у `short/`
-4. Веде `memory.txt` — короткий зміст усього архіву
-5. Записує службові сесії в `_system/` (окремо від архіву)
-6. Автоматично оновлює системний промпт моделі при кожному запуску
+1. Numbers all conversation sessions
+2. Stores full transcripts in `full/`
+3. Automatically generates short, tagged summaries in `short/`
+4. Maintains `memory.txt` — a concise overview of the entire archive
+5. Logs internal service sessions to `_system/` (kept separate from the archive)
+6. Automatically updates the model's system prompt on every launch
 
 ---
 
-## Налаштування
+## Setup
 
 ### Google Drive
-- Створіть кореневу папку для архіву
-- Скопіюйте ID папки з URL: `drive.google.com/drive/folders/**ЦЕ_І_Є_ID**`
-- Вставте ID у поле "Google Drive — ID кореневої папки"
+- Create a root folder for the archive
+- Copy the folder ID from the URL: `drive.google.com/drive/folders/**THIS_IS_THE_ID**`
+- Paste the ID into the "Google Drive — root folder ID" field
 
-### API ключі (для генерації шортів)
-| Платформа | Де отримати |
+### API keys (for generating summaries)
+| Platform | Where to get it |
 |-----------|-------------|
 | Claude | console.anthropic.com → API Keys |
 | Gemini | aistudio.google.com → Get API key |
@@ -65,72 +65,72 @@ No cloud lock-in. No third-party server reading your chats. Your conversations s
 
 ---
 
-## Структура архіву
+## Archive structure
 
 ```
-[Коренева папка]/
+[Root folder]/
   claude/
     full/
-      full_001-099.txt    ← повні тексти сесій 1-99
-      full_100-201.txt    ← сесії 100-201
+      full_001-099.txt    ← full transcripts, sessions 1-99
+      full_100-201.txt    ← sessions 100-201
     short/
-      short_001-099.txt   ← стислі записи з тегами
+      short_001-099.txt   ← tagged short summaries
     _system/
-      sys_001_обробка_1.txt  ← службові сесії (не читати)
-    memory.txt            ← зміст усього архіву
+      sys_001_processing_1.txt  ← internal service sessions (not for reading)
+    memory.txt            ← summary of the entire archive
 ```
 
 ---
 
-## Режими обробки
+## Processing modes
 
-| Режим | Опис |
+| Mode | Description |
 |-------|------|
-| **Нові сесії** | Додає сесії після останньої збереженої. Для регулярного використання. |
-| **Автоматично** | Заповнює пропуски в архіві. Для відновлення після збоїв. |
-| **Всі** | Переробляє архів з нуля. |
-| **Вибрати** | Ручний вибір конкретних сесій. |
+| **New sessions** | Adds sessions after the last one saved. For regular use. |
+| **Automatic** | Fills gaps in the archive. For recovery after failures. |
+| **All** | Rebuilds the archive from scratch. |
+| **Select** | Manually pick specific sessions. |
 
 ---
 
-## Ліміти
+## Limits
 
-**Архіву:** при досягненні заданого розміру (за замовчуванням 2 MB) створюється новий файл з позначкою діапазону сесій.
+**Archive:** once a set size is reached (2 MB by default), a new file is created with a marked session range.
 
-**Моделі:** при досягненні ліміту API прогрес зберігається автоматично. Є кнопки "Продовжити зараз" або "Зупинити і зберегти".
+**Model:** once the API limit is reached, progress is saved automatically. "Resume now" or "Stop and save" buttons are available.
 
 ---
 
-## Системний промпт
+## System prompt
 
-Після завершення обробки розширення автоматично вставляє до системного промпту моделі:
+After processing finishes, the extension automatically inserts this into the model's system prompt:
 
 ```
 <memory_archive>
-Це твій архів усіх розмов із користувачем.
-Шлях: [Drive: ...]/claude/
+This is your archive of all conversations with the user.
+Path: [Drive: ...]/claude/
 ...
 </memory_archive>
 ```
 
-Модель бачить цей промпт при кожному новому запиті.
+The model sees this prompt on every new request.
 
 ---
 
-## Дозволи
+## Permissions
 
-| Дозвіл | Навіщо |
+| Permission | Why |
 |--------|--------|
-| `storage` | Зберігати налаштування розширення |
-| `scripting` | Вставляти системний промпт |
-| `tabs` | Знайти відкриту вкладку моделі |
-| `alarms` | Автовідновлення після ліміту |
-| `identity` | OAuth для хмарних сховищ |
+| `storage` | Save extension settings |
+| `scripting` | Insert the system prompt |
+| `tabs` | Find the open model tab |
+| `alarms` | Auto-resume after hitting a limit |
+| `identity` | OAuth for cloud storage |
 
 ---
 
-## Підтримувані платформи
+## Supported platforms
 
-- **Браузери:** Chrome, Edge, Brave (Manifest V3)
-- **Моделі:** Claude (claude.ai), Gemini (gemini.google.com), ChatGPT (chatgpt.com), DeepSeek (chat.deepseek.com)
-- **Сховища:** Google Drive, OneDrive, Dropbox, локально
+- **Browsers:** Chrome, Edge, Brave (Manifest V3)
+- **Models:** Claude (claude.ai), Gemini (gemini.google.com), ChatGPT (chatgpt.com), DeepSeek (chat.deepseek.com)
+- **Storage:** Google Drive, OneDrive, Dropbox, local
