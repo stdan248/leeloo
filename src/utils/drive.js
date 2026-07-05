@@ -3,6 +3,16 @@
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 
+// ── Кеш fileId у пам'яті ────────────────────────────────────────────────────
+// Пошуковий індекс Drive оновлюється з затримкою (eventual consistency).
+// Якщо кілька save()/appendSorted() підряд летять на той самий шлях швидше,
+// ніж індекс встигає оновитись, findFile() через API-пошук може не побачити
+// щойно створений файл і створити дублікат з тим самим іменем.
+// Тому щойно ми дізналися fileId (при створенні або при першому вдалому
+// пошуку) — запам'ятовуємо його і надалі йдемо напряму по ID, без пошуку.
+const fileIdCache = new Map(); // key: `${rootId}::${filePath}` → { fileId, parentId, fileName, size }
+function cacheKey(rootId, filePath) { return `${rootId}::${filePath}`; }
+
 export const DriveStorage = {
 
   async getOrCreateFolder(parentId, name) {
@@ -24,6 +34,11 @@ export const DriveStorage = {
   },
 
   async findFile(rootId, filePath) {
+    const key = cacheKey(rootId, filePath);
+    if (fileIdCache.has(key)) {
+      return { ...fileIdCache.get(key) };
+    }
+
     const parts = filePath.split('/');
     const fileName = parts.pop();
     let parentId = rootId;
@@ -36,7 +51,9 @@ export const DriveStorage = {
       { headers: { Authorization: `Bearer ${token}` } }
     );
     const found = await search.json();
-    return { fileId: found.files?.[0]?.id, parentId, fileName, size: found.files?.[0]?.size };
+    const result = { fileId: found.files?.[0]?.id, parentId, fileName, size: found.files?.[0]?.size };
+    if (result.fileId) fileIdCache.set(key, result);
+    return result;
   },
 
   async read(rootId, filePath) {
@@ -60,6 +77,8 @@ export const DriveStorage = {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'text/plain' },
         body: blob,
       });
+      // оновлюємо кешований розмір, ID лишається той самий
+      fileIdCache.set(cacheKey(rootId, filePath), { fileId, parentId, fileName, size: blob.size });
     } else {
       const meta = new Blob(
         [JSON.stringify({ name: fileName, parents: [parentId], mimeType: 'text/plain' })],
@@ -68,11 +87,17 @@ export const DriveStorage = {
       const form = new FormData();
       form.append('metadata', meta);
       form.append('file', blob);
-      await fetch(`${UPLOAD_API}/files?uploadType=multipart`, {
+      const createRes = await fetch(`${UPLOAD_API}/files?uploadType=multipart`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: form,
       });
+      const created = await createRes.json();
+      // критичний момент: запам'ятовуємо ID щойно створеного файлу відразу,
+      // не чекаючи, поки пошуковий індекс Drive його "побачить"
+      if (created?.id) {
+        fileIdCache.set(cacheKey(rootId, filePath), { fileId: created.id, parentId, fileName, size: blob.size });
+      }
     }
   },
 
