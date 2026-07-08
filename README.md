@@ -10,7 +10,7 @@ No cloud lock-in, no Leeloo-run backend server. Note: to generate summaries, con
 - ☁️ **Your storage, your rules** — Google Drive, OneDrive, Dropbox, or fully local
 - 🧠 **Tagged summaries, not just backup** — auto-generates tagged summaries per session and a running `memory.txt` index of the whole archive
 - 🤖 **Bring your own AI for summaries** — pick any model to generate the shorts, independent of which platform you're archiving: Claude, Gemini, GPT, DeepSeek, OpenRouter, Qwen, HuggingFace, Mistral, Groq (conversation text is sent to that provider's API for this purpose)
-- 🗺️ **Self-updating archive map** — automatically inserts a map of your archive (path + folder structure + reading strategy) into the model's system prompt on every session, so the AI knows *where* its history with you lives. Note: this is a map, not the content itself — see [System prompt](#system-prompt) below for exactly what gets inserted
+- 🗺️ **Self-updating archive map** — automatically prepares a map of your archive (path + folder structure + reading strategy) for the model's system prompt on every session, so the AI can know *where* its history with you lives. Note: this is a map, not the content itself — see [System prompt](#system-prompt) below for exactly what's prepared and how it currently reaches the page
 - ⚡ **Lite mode** — single-screen, minimal setup, local-only, for when you just want it to work
 - 🇺🇦 🇬🇧 Full UA/EN localization, dark theme
 
@@ -20,7 +20,7 @@ No cloud lock-in, no Leeloo-run backend server. Note: to generate summaries, con
 - Full transcripts and summaries are written directly to **the storage you choose**: your own Google Drive, Dropbox, OneDrive, or local disk.
 - To **generate summaries**, the conversation text is sent to the AI provider you select (Claude, Gemini, GPT, DeepSeek, etc.) via that provider's official API, using your own API key. That provider's own privacy policy applies to this data.
 - API keys and cloud access tokens are currently stored in the browser's local storage. This is acceptable for personal/MVP use, but not yet hardened for wide public release — treat your keys accordingly (don't share your browser profile, revoke keys you're not using).
-- The system prompt inserted into the model is an **archive map** (path + structure), not archive content — see [System prompt](#system-prompt) and [Making memory actually work today](#making-memory-actually-work-today) for exactly what's sent, and what each platform can (and can't) do with it.
+- The system prompt prepared for the model is an **archive map** (path + structure), not archive content — see [System prompt](#system-prompt) and [Making memory actually work today](#making-memory-actually-work-today) for exactly what's prepared, how it currently reaches the page, and what each platform can (and can't) do with it.
 
 ## Demo
 
@@ -47,7 +47,7 @@ No cloud lock-in, no Leeloo-run backend server. Note: to generate summaries, con
 3. Automatically generates short, tagged summaries in `short/`
 4. Maintains `memory.txt` — a concise overview of the entire archive
 5. Logs internal service sessions to `_system/` (kept separate from the archive)
-6. Automatically inserts an archive map (path, folder structure, reading strategy) into the model's system prompt on every launch — see [System prompt](#system-prompt)
+6. Automatically prepares an archive map (path, folder structure, reading strategy) for the model's system prompt on every launch — see [System prompt](#system-prompt)
 
 ---
 
@@ -111,7 +111,7 @@ No cloud lock-in, no Leeloo-run backend server. Note: to generate summaries, con
 
 ## System prompt
 
-After processing finishes, the extension automatically inserts an **archive map** into the model's system prompt — the path, folder structure, and a suggested reading strategy:
+After processing finishes, the extension automatically prepares an **archive map** for the model's system prompt — the path, folder structure, and a suggested reading strategy — and passes it to the page. (How that page turns it into something the model actually sees is not yet fully verified — see the note below.)
 
 ```
 <memory_archive>
@@ -135,9 +135,11 @@ Search by topic       → tags.txt → find sessions → short_NNN.txt
 
 **Important:** this is a map of the archive, not its contents. The extension does not read `memory.txt` or any summaries and paste their text into the prompt — it only tells the model *where things are*. Whether the model can act on that map depends entirely on the platform and its own connectors (see [Making memory actually work today](#making-memory-actually-work-today) below) — Leeloo itself does not give the model a way to read files.
 
+**Technical note:** internally, this happens by setting a `window` variable and dispatching a `mb:system-prompt` event on the platform's page — Leeloo hands the map off to the page automatically, but whether it lands somewhere the model actually reads (vs. just sitting unused in the page) depends on the platform-specific content script. This is on our own review list, not yet fully verified end-to-end.
+
 If you want the model to see archive content today without relying on a platform's own connector, use the **book** export feature (`Books` in the popup) to compile `memory.txt` / tags / summaries / full transcripts into a single file, and paste or attach that manually.
 
-The archive-map prompt above is (re-)inserted into the active model tab on every new session/launch.
+The archive-map prompt above is (re-)prepared and handed to the active model tab on every new session/launch.
 
 ---
 
@@ -167,7 +169,7 @@ The archive-map prompt tells the model *where* its history lives, but only some 
 | Permission | Why |
 |--------|--------|
 | `storage` | Save extension settings |
-| `scripting` | Insert the system prompt |
+| `scripting` | Prepare and hand off the system prompt |
 | `tabs` | Find the open model tab |
 | `alarms` | Auto-resume after hitting a limit |
 | `identity` | OAuth for cloud storage |
