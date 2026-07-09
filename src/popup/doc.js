@@ -31,6 +31,20 @@
               <blockquote><strong>Leeloo:)</strong> — це як щоденник для вашого AI. Ви розмовляєте, а додаток архівує, сортує, підсумовує й у потрібний момент нагадує AI, про що ви говорили раніше.</blockquote>
             `
           },
+          privacy: {
+            title: 'Приватність',
+            content: `
+              <h2>Приватність і дані</h2>
+              <p>Коротко про те, куди йдуть ваші дані, коли ви користуєтесь Leeloo:).</p>
+              <ul>
+                <li><strong>У Leeloo:) немає власного сервера.</strong> Додаток не має жодної інфраструктури, через яку проходили б ваші дані.</li>
+                <li><strong>Архів зберігається там, де ви самі обрали</strong> — на вашому Google Drive, Dropbox, OneDrive або локальному диску.</li>
+                <li><strong>Для генерації шортів</strong> текст розмови надсилається обраному вами AI-провайдеру (Claude, Gemini, GPT, DeepSeek тощо) через офіційний API цього провайдера, з вашим власним ключем. Далі діє політика приватності саме цього провайдера.</li>
+                <li><strong>API-ключі та токени доступу до хмари</strong> наразі зберігаються в локальному сховищі браузера. Для особистого використання це прийнятно, але поки не розраховано на широке публічне використання — не діліться профілем браузера й відкликайте ключі, якими не користуєтесь.</li>
+                <li><strong>Системний промпт</strong> (розділ 4.5) — це лише мапа структури архіву, не сам вміст. Він показується вам на екрані, і додається до налаштувань AI вручну, за вашим бажанням.</li>
+              </ul>
+            `
+          },
           terminology: {
             title: '1. Термінологія',
             content: `
@@ -339,8 +353,9 @@
               <p>Сесії, позначені як службові, зберігаються окремо в папці <code>_system/</code>. Вони не потрапляють до основної книги, але зберігаються для технічних потреб.</p>
               <p>📁 Їх можна спокійно видаляти, якщо вони не потрібні — це не вплине на основний архів і не займатиме зайвого місця.</p>
               <h3 id="book-prompt">4.5. Системний промпт</h3>
-              <p>Після завершення створення книги додаток автоматично генерує <strong>системний промпт</strong>, який допомагає AI правильно інтерпретувати структуру пам'яті. Він <strong>показується на фінальному екрані</strong> при завершенні формування архіву (не зберігається у файлі).</p>
-              <p>💡 <strong>За бажанням</strong> ви можете додати цей промпт до <strong>настанов (system instructions)</strong> вашого AI. Тоді щоразу, коли ви передаватимете книгу пам'яті, AI вже знатиме, як її правильно читати й інтерпретувати, — вам не доведеться щоразу пояснювати, де саме міститься книга.</p>
+              <p>Одразу після завершення обробки сесій (натискання <strong>«Старт»</strong>, ще до створення книги) додаток формує <strong>системний промпт</strong> — короткий опис структури вашого архіву, який допомагає AI зрозуміти, де що шукати. Він <strong>показується на фінальному екрані</strong> при завершенні обробки (не зберігається у файлі).</p>
+              <p>⚠️ <strong>Важливо:</strong> цей промпт <strong>не додається автоматично</strong> до розмови з AI — модель його сама не бачить і не читає. Це лише готовий текст, який показує вам додаток.</p>
+              <p>💡 Щоб AI дійсно скористався ним, <strong>скопіюйте цей текст самостійно</strong> й додайте його до <strong>настанов (system instructions)</strong> вашого AI (там, де це підтримується платформою). Тоді щоразу, коли ви передаватимете книгу пам'яті, AI вже знатиме, як її правильно читати й інтерпретувати, — вам не доведеться щоразу пояснювати, де саме міститься книга.</p>
             `
           },
           faq: {
@@ -368,7 +383,7 @@
             title: '6. Контакти',
             content: `
               <h2>6. Контакти та подяка</h2>
-              <p><strong>Створено з любов'ю!</strong><br>Сергій та Люм для Софії та Міли Й. 💛</p>
+              <p><strong>Створено з любов'ю!</strong><br>Для Софії та Міли Й. 💛</p>
               <p><strong>Контакти:</strong><br>- Email: <a href="mailto:respond2q+leeloo@gmail.com">respond2q+leeloo@gmail.com</a></p>
             `
           }
@@ -400,6 +415,20 @@
               </ul>
               <h3>In plain words:</h3>
               <blockquote><strong>Leeloo:)</strong> is like a diary for your AI. You talk, and the app archives, sorts, summarizes, and at the right moment reminds the AI of what you discussed earlier.</blockquote>
+            `
+          },
+          privacy: {
+            title: 'Privacy',
+            content: `
+              <h2>Privacy and data</h2>
+              <p>A short summary of where your data goes when you use Leeloo:).</p>
+              <ul>
+                <li><strong>Leeloo:) has no server of its own.</strong> The app has no infrastructure that your data passes through.</li>
+                <li><strong>The archive is stored wherever you choose</strong> — your own Google Drive, Dropbox, OneDrive, or local disk.</li>
+                <li><strong>To generate shorts</strong>, conversation text is sent to the AI provider you select (Claude, Gemini, GPT, DeepSeek, etc.) via that provider's official API, using your own key. That provider's own privacy policy applies from there.</li>
+                <li><strong>API keys and cloud access tokens</strong> are currently stored in the browser's local storage. This is fine for personal use, but not yet built for wide public release — don't share your browser profile, and revoke keys you're not using.</li>
+                <li><strong>The system prompt</strong> (section 4.5) is only a map of the archive's structure, not its content. It's shown to you on screen, and you add it to your AI's settings manually, if you choose to.</li>
+              </ul>
             `
           },
           terminology: {
@@ -710,8 +739,9 @@
               <p>Sessions marked as system are stored separately in the <code>_system/</code> folder. They don't appear in the main book but are kept for technical purposes.</p>
               <p>📁 You can safely delete them if they're not needed — it won't affect the main archive or take up unnecessary space.</p>
               <h3 id="book-prompt">4.5. System prompt</h3>
-              <p>After creating the book, the app automatically generates a <strong>system prompt</strong> that helps the AI properly interpret the memory structure. It <strong>appears on the final screen</strong> when the archive formation is complete (not stored in a file).</p>
-              <p>💡 <strong>Optionally</strong> you can add this prompt to your AI's <strong>system instructions</strong>. Then every time you feed the memory book, the AI will already know how to read and interpret it correctly — you won't have to explain where the book is each time.</p>
+              <p>Right after session processing finishes (clicking <strong>"Start"</strong>, before you create a book), the app builds a <strong>system prompt</strong> — a short description of your archive's structure meant to help the AI know where to look. It <strong>appears on the final screen</strong> when processing is complete (not stored in a file).</p>
+              <p>⚠️ <strong>Important:</strong> this prompt is <strong>not added automatically</strong> to your conversation with the AI — the model doesn't see or read it on its own. It's just ready-made text the app shows you.</p>
+              <p>💡 For the AI to actually use it, <strong>copy this text yourself</strong> and add it to your AI's <strong>system instructions</strong> (where the platform supports this). Then every time you feed the memory book, the AI will already know how to read and interpret it correctly — you won't have to explain where the book is each time.</p>
             `
           },
           faq: {
@@ -739,7 +769,7 @@
             title: '6. Contacts',
             content: `
               <h2>6. Contacts & Acknowledgments</h2>
-              <p><strong>Made with love!</strong><br>Serhii & Lum for Sofiia & Milla J. 💛</p>
+              <p><strong>Made with love!</strong><br>For Sofiia & Milla J. 💛</p>
               <p><strong>Contacts:</strong><br>- Email: <a href="mailto:respond2q+leeloo@gmail.com">respond2q+leeloo@gmail.com</a></p>
             `
           }

@@ -20,7 +20,7 @@ export const LANG = {
     onboardingStep3:  'Оберіть папку, натиснувши «Обрати / Оновити». Натискайте цю кнопку завжди, коли є попередження «Потрібно оновити доступ до диску».',
     onboardingStep4:  'Дочекайтесь завантаження всіх сесій та натисніть «Старт». Додаток сформує у вашій папці структуру:',
     onboardingStep5:  'Після створення архіву натисніть «Створити книгу» — дайте прочитати її вашому АІ, прикріпивши файл або надавши доступ через хмару.',
-    onboardingNote:   "Зроблено з любов'ю: Сергій та Люм для Софії та Міли Й.",
+    onboardingNote:   "Зроблено з любов'ю: для Софії та Міли Й.",
     btnConsentNo:     'Не зараз',
     btnConsentOk:     'Зрозуміло / Підтверджую',
 
@@ -266,7 +266,7 @@ export const LANG = {
     onboardingStep3:  'Choose a folder by clicking "Select / Renew". Always click this button when you see the "Renew disk access" warning.',
     onboardingStep4:  'Wait for all sessions to load, then click "Start". The app will create the following structure in your folder:',
     onboardingStep5:  'After the archive is created, click "Create book" — share it with your AI by attaching the file or granting cloud access.',
-    onboardingNote:   'Made with love: Serhiy & Lum for Sofia & Milla J.',
+    onboardingNote:   'Made with love: for Sofia & Milla J.',
     btnConsentNo:     'Not now',
     btnConsentOk:     'Got it / Confirm',
 
