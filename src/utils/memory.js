@@ -11,7 +11,7 @@ export async function buildMemoryTxt(sessions, config) {
 
   for (const session of sessions) {
     if (session.short && session.num) {
-      existingMap.set(session.num, formatEntry(session));
+      existingMap.set(session.num, formatEntry(session, config));
     }
   }
 
@@ -35,9 +35,11 @@ function parseMemoryEntries(text) {
   const map = new Map();
   if (!text) return map;
 
-  const blocks = text.split(/\n+(?=\d{3} \| )/);
+  // \d+ замість фіксованих \d{3} — щоб не втратити записи, коли нумерація
+  // переходить за 999 (numDigits: 4) чи лишається короткою в старих записах.
+  const blocks = text.split(/\n+(?=\d+ \| )/);
   for (const block of blocks) {
-    const match = block.match(/^(\d{3}) \| /);
+    const match = block.match(/^(\d+) \| /);
     if (match) {
       map.set(parseInt(match[1]), block.trim());
     }
@@ -45,8 +47,9 @@ function parseMemoryEntries(text) {
   return map;
 }
 
-function formatEntry(session) {
-  const num = String(session.num).padStart(3, '0');
+function formatEntry(session, config) {
+  const digits = config?.numDigits || 4;
+  const num = String(session.num).padStart(digits, '0');
   const id = session.id || '?';
 
   const shortText = session.short?.trim() || '';
