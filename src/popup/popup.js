@@ -1131,7 +1131,7 @@ function bindEvents() {
     state.mode = v;
     updateModeInfo();
     toggle('select-panel', v === 'select');
-    if (v === 'select') buildGrid();
+    if (v === 'select') refreshExisting().then(buildGrid);
   });
 
   bindChipRow('archive-mode-row', v => {
@@ -1699,6 +1699,16 @@ function buildConfirmTable() {
 }
 
 // ── Processing ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+async function refreshExisting() {
+  try {
+    const config = buildConfig();
+    const result = await chrome.runtime.sendMessage({ type: 'GET_EXISTING', config });
+    state.existing = new Set(result || []);
+  } catch (_) {
+    state.existing = new Set();
+  }
+}
+
 async function startProcessing() {
   const config = buildConfig();
 
@@ -1713,6 +1723,8 @@ async function startProcessing() {
       showRestoreHint(false);
     } catch (e) { log('Помилка дозволу: ' + e.message, 'err'); return; }
   }
+
+  await refreshExisting();
 
   const result = await chrome.runtime.sendMessage({ type: 'GET_SESSIONS', platform: config.platform });
   if (result?.error) { log(result.error, 'err'); return; }
