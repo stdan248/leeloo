@@ -178,8 +178,96 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case 'DETECT_SHORT_FORMAT':
       detectShortFormat(msg.config).then(sendResponse);
       return true;
+
+    case 'GET_EXISTING':
+      computeExistingNums(msg.config)
+        .then(set => sendResponse([...set]))
+        .catch((e) => { console.warn('[SW] GET_EXISTING помилка:', e.message); sendResponse([]); });
+      return true;
   }
 });
+
+// ── Номери сесій, які вже повністю заархівовані на диску ──────────────────────
+// Незалежна від auto-режиму перевірка: читає full/short/memory і повертає Set
+// номерів, що вважаються "existing" з урахуванням archiveMode/shortFormat.
+// Використовується popup.js для коректної роботи режимів 'new' та ручного вибору.
+async function computeExistingNums(config) {
+  const storage = getStorage(config.storage);
+  const [existingFullFiles, existingShortFiles] = await Promise.all([
+    storage.listFolder(config.cloudId, `${config.platform}/full`).catch(() => []),
+    storage.listFolder(config.cloudId, `${config.platform}/short`).catch(() => []),
+  ]);
+
+  const existingFullNums = new Set();
+  existingFullFiles.forEach(f => {
+    const m = f.name.match(/^full_(\d+)\.txt$/);
+    if (m) existingFullNums.add(parseInt(m[1]));
+  });
+
+  const existingShortNums = new Set();
+  for (const f of existingShortFiles) {
+    const m = f.name.match(/^short_(\d+)\.txt$/);
+    if (m) existingShortNums.add(parseInt(m[1]));
+  }
+
+  const existingBlockNums = new Set();
+  const blockFiles = existingShortFiles.filter(f => /^short_(\d+)-(\d+)\.txt$/.test(f.name));
+  await Promise.all(blockFiles.map(async (f) => {
+    try {
+      const content = await storage.read(config.cloudId, `${config.platform}/short/${f.name}`);
+      if (content) {
+        for (const line of content.split('\n')) {
+          const m = line.match(/^SESSION_NUM:\s*(\d+)/);
+          if (m) existingBlockNums.add(parseInt(m[1]));
+        }
+      }
+    } catch (_) {
+      // не вдалось прочитати блок — не рахуємо номери з нього як existing
+    }
+  }));
+
+  const shortFormat = config.shortFormat || 'both';
+
+  const existingMemoryNums = new Set();
+  try {
+    const memoryText = await storage.read(config.cloudId, `${config.platform}/memory.txt`);
+    if (memoryText) {
+      for (const line of memoryText.split('\n')) {
+        const m = line.match(/^(\d+)\s*\|/);
+        if (m) existingMemoryNums.add(parseInt(m[1]));
+      }
+    }
+  } catch (_) {}
+
+  // Кандидати — усі номери, що фігурують хоч десь
+  const candidates = new Set([
+    ...existingFullNums, ...existingShortNums, ...existingBlockNums, ...existingMemoryNums,
+  ]);
+
+  const existing = new Set();
+  for (const num of candidates) {
+    const fullMissing = !existingFullNums.has(num);
+
+    let shortMissing;
+    if (shortFormat === 'singles') {
+      shortMissing = !existingShortNums.has(num);
+    } else if (shortFormat === 'blocks') {
+      shortMissing = !existingBlockNums.has(num);
+    } else {
+      shortMissing = !existingShortNums.has(num) || !existingBlockNums.has(num);
+    }
+
+    const memoryMissing = !existingMemoryNums.has(num);
+
+    const isComplete = config.archiveMode === 'full_only'
+      ? !fullMissing
+      : (!fullMissing && !shortMissing && !memoryMissing);
+
+    if (isComplete) existing.add(num);
+  }
+
+  return existing;
+}
 
 // ── Alarm для автовідновлення після ліміту ────────────────────────────────────
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -374,7 +462,13 @@ async function startProcessing(config) {
   }
   console.log('[SW] Перші 3 сесії:', sessionsToProcess.slice(0,3).map(s => `idx:${s.index} date:${s.createdAt?.slice(0,10)}`));
   let maxSysIndex = 0;
-  if (config.mode === 'auto') {
+  // Перевірка диска потрібна не лише для 'auto': у 'new'/'select' (і дефолтному
+  // 'auto'-фолбеку в popup) сесії, яким уже присвоєно номер, теж можуть мати
+  // готовий full, але відсутній short/memory (наприклад, обробку перервало на
+  // AI-кроці). Без цієї перевірки processNext вважає такі сесії повністю новими
+  // і даремно перезаписує вже наявний full. 'all' — свідомий виняток: користувач
+  // явно просить переробити геть усе, включно з full.
+  if (config.mode !== 'all') {
     try {
       const storage = getStorage(config.storage);
       const [existingFullFiles, existingShortFiles] = await Promise.all([
@@ -447,7 +541,7 @@ async function startProcessing(config) {
       const numStart = config.numStart || 1;
       sessionsToProcess = sessionsToProcess
         .map((session) => ({ ...session, originalNum: session.index }))
-        .filter(session => {
+        .map(session => {
           const num = session.originalNum;
           const fullMissing = !existingFullNums.has(num);
 
@@ -463,9 +557,10 @@ async function startProcessing(config) {
 
           const memoryMissing = !existingMemoryNums.has(num);
 
-          // В режимі full_only — шорти та memory не враховуємо
+          // В режимі full_only — шорти та memory не враховуємо, прапорці не потрібні
           if (config.archiveMode === 'full_only') {
-            return fullMissing;
+            session._diskMissing = fullMissing;
+            return session;
           }
 
           if (!fullMissing && !shortMissing && memoryMissing) {
@@ -473,13 +568,21 @@ async function startProcessing(config) {
           } else if (!fullMissing && (shortMissing || memoryMissing)) {
             session._shortOnly = true;
           }
-          return fullMissing || shortMissing || memoryMissing;
+          session._diskMissing = fullMissing || shortMissing || memoryMissing;
+          return session;
         });
 
-      swLog(`[SW] Авто-режим: знайдено ${sessionsToProcess.length} пропущених з ${config.sessions.length}`);
-      safeSendMessage({ type: 'MISSING_FOUND', count: sessionsToProcess.length });
+      // Відсіюємо повністю готові сесії — лише для 'auto' (там це і є сенс режиму:
+      // "добери те, чого бракує"). Для 'new'/'select' список сесій уже визначено
+      // раніше (popup передав саме ті, що треба) — тут ми лише розставили прапорці
+      // _shortOnly/_memoryOnly вище, щоб не чіпати вже наявний full.
+      if (config.mode === 'auto') {
+        sessionsToProcess = sessionsToProcess.filter(session => session._diskMissing);
+        swLog(`[SW] Авто-режим: знайдено ${sessionsToProcess.length} пропущених з ${config.sessions.length}`);
+        safeSendMessage({ type: 'MISSING_FOUND', count: sessionsToProcess.length });
+      }
     } catch (err) {
-      console.warn('[SW] Авто-режим: не вдалося перевірити диск, обробляємо всі:', err.message);
+      console.warn('[SW] Перевірка диска: не вдалося перевірити, обробляємо всі:', err.message);
     }
   }
 
