@@ -438,6 +438,7 @@ async function startProcessing(config) {
   runLogStartedAt = new Date();
   console.log('[RUN] Старт обробки');
   console.log('[SW] config.storage:', config.storage, 'config.cloudId:', config.cloudId);
+  try {
   // Для shorts_only без авто — визначаємо скільки шортів вже є
   let startIndex = 0;
   if (config.archiveMode === 'shorts_only' && config.mode !== 'auto') {
@@ -629,6 +630,20 @@ async function startProcessing(config) {
   chrome.action.setBadgeText({ text: '...' });
   chrome.action.setBadgeBackgroundColor({ color: '#4CAF50' });
   return await processNext();
+  } catch (err) {
+    // Раніше будь-яка помилка до входу у внутрішній try (наприклад, з
+    // saveSessionMap — session_map.txt зберігається ДО перевірки диска)
+    // просто "губила" весь виклик startProcessing: popup ніколи не отримував
+    // жодного повідомлення й лишався на екрані "Ініціалізація..." назавжди.
+    // Тепер будь-який непійманий збій усередині функції явно повідомляється.
+    console.error('[SW] startProcessing: непіймана помилка — зупиняємось:', err.message);
+    chrome.action.setBadgeText({ text: '!' });
+    chrome.action.setBadgeBackgroundColor({ color: '#F44336' });
+    try { await saveRunLog(config, 'STORAGE_ERROR'); } catch (_) {}
+    const type = err.message?.startsWith('STORAGE_ERROR') ? 'STORAGE_ERROR' : 'ERROR_STOP';
+    safeSendMessage({ type, message: err.message || 'невідома помилка' });
+    return { stopped: true };
+  }
 }
 
 async function resumeProcessing() {
@@ -760,6 +775,21 @@ async function processNext() {
       chrome.action.setBadgeBackgroundColor({ color: '#F44336' });
       await saveRunLog(config, 'STORAGE_ERROR');
       safeSendMessage({ type: 'STORAGE_ERROR', message: err.message });
+      return;
+    }
+    if (err.code === 'AUTH_ERROR') {
+      // Невірний/відсутній API-ключ чи неіснуюча модель — однаково для КОЖНОЇ
+      // сесії цього прогону, а не проблема конкретної сесії. Per-сесійний skip
+      // тут не має сенсу: без правильного ключа кожна наступна сесія впаде
+      // так само, і ми просто позначимо "пропущено" весь архів підряд, жодної
+      // реально не обробивши.
+      console.error('[SW] AUTH_ERROR — невірний ключ/модель, зупиняємось:', err.message);
+      processingState.running = false;
+      await chrome.storage.local.set({ processingState });
+      chrome.action.setBadgeText({ text: '⏸' });
+      chrome.action.setBadgeBackgroundColor({ color: '#F44336' });
+      await saveRunLog(config, 'ERROR_STOP');
+      safeSendMessage({ type: 'ERROR_STOP', message: err.message });
       return;
     }
     // Інші помилки (413, 400, 401 і т.п.) — рахуємо спроби саме для цієї сесії.
