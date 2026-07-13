@@ -2,10 +2,20 @@
 
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 
+// ── Кеш ID у пам'яті ─────────────────────────────────────────────────────────
+// Той самий принцип, що й у drive.js: пошук по API ($filter) має затримку
+// індексації, тож повторний пошук одразу після створення може не побачити
+// щойно створений об'єкт. Кешуємо ID одразу після того, як самі його дізнались.
+const folderIdCache = new Map(); // key: `${parentId}::${name}` → folderId
+const fileIdCache   = new Map(); // key: `${rootId}::${filePath}` → { fileId, parentId, fileName, size }
+
 export const OneDriveStorage = {
 
   async getOrCreateFolder(parentId, name) {
     if (!parentId) throw new Error(`getOrCreateFolder: parentId is undefined for folder "${name}"`);
+    const cacheKey = `${parentId}::${name}`;
+    if (folderIdCache.has(cacheKey)) return folderIdCache.get(cacheKey);
+
     const token = await getToken();
 
     // Шукаємо серед дочірніх без $filter (не всі endpoint підтримують)
@@ -15,20 +25,47 @@ export const OneDriveStorage = {
     ));
     const found = await search.json();
     const existing = found.value?.find(f => f.name === name && f.folder);
-    if (existing) return existing.id;
+    if (existing) {
+      folderIdCache.set(cacheKey, existing.id);
+      return existing.id;
+    }
 
-    // Створюємо
-    const create = await checkResponse(await fetch(`${GRAPH}/me/drive/items/${parentId}/children`, {
+    // Створюємо. conflictBehavior: 'fail' замість 'rename' — якщо через гонитву
+    // папка вже існує (race), хочемо помітну помилку, а не мовчазний дублікат
+    // "short (1)" поряд зі "short".
+    const create = await fetch(`${GRAPH}/me/drive/items/${parentId}/children`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, folder: {}, '@microsoft.graph.conflictBehavior': 'rename' }),
-    }));
+      body: JSON.stringify({ name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }),
+    });
+
+    if (create.status === 409) {
+      // Хтось (інший паралельний виклик) щойно створив цю ж папку — це не помилка,
+      // а сигнал повторити пошук і взяти вже існуючий ID.
+      const retry = await checkResponse(await fetch(
+        `${GRAPH}/me/drive/items/${parentId}/children?$select=id,name,folder&$top=200`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      ));
+      const retryFound = await retry.json();
+      const retryExisting = retryFound.value?.find(f => f.name === name && f.folder);
+      if (retryExisting) {
+        folderIdCache.set(cacheKey, retryExisting.id);
+        return retryExisting.id;
+      }
+      throw new Error(`getOrCreateFolder: конфлікт при створенні "${name}", але повторний пошук не знайшов папку`);
+    }
+
+    await checkResponse(create, `створення папки "${name}"`);
     const folder = await create.json();
     if (!folder.id) throw new Error(`getOrCreateFolder: failed to create "${name}": ${JSON.stringify(folder)}`);
+    folderIdCache.set(cacheKey, folder.id);
     return folder.id;
   },
 
   async findFile(rootId, filePath) {
+    const key = `${rootId}::${filePath}`;
+    if (fileIdCache.has(key)) return { ...fileIdCache.get(key) };
+
     const parts = filePath.split('/');
     const fileName = parts.pop();
     let parentId = rootId;
@@ -42,7 +79,9 @@ export const OneDriveStorage = {
     ));
     const found = await search.json();
     const file = found.value?.[0];
-    return { fileId: file?.id, parentId, fileName, size: file?.size };
+    const result = { fileId: file?.id, parentId, fileName, size: file?.size };
+    if (result.fileId) fileIdCache.set(key, result);
+    return result;
   },
 
   async read(rootId, filePath) {
@@ -61,17 +100,24 @@ export const OneDriveStorage = {
     const blob = new Blob([content], { type: 'text/plain; charset=utf-8' });
 
     if (fileId) {
-      await fetch(`${GRAPH}/me/drive/items/${fileId}/content`, {
+      const res = await fetch(`${GRAPH}/me/drive/items/${fileId}/content`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'text/plain' },
         body: blob,
       });
+      await checkResponse(res, `оновлення файлу "${filePath}"`);
+      fileIdCache.set(`${rootId}::${filePath}`, { fileId, parentId, fileName, size: blob.size });
     } else {
-      await fetch(`${GRAPH}/me/drive/items/${parentId}:/${fileName}:/content`, {
+      const res = await fetch(`${GRAPH}/me/drive/items/${parentId}:/${fileName}:/content`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'text/plain' },
         body: blob,
       });
+      await checkResponse(res, `створення файлу "${filePath}"`);
+      const created = await res.json().catch(() => null);
+      if (created?.id) {
+        fileIdCache.set(`${rootId}::${filePath}`, { fileId: created.id, parentId, fileName, size: blob.size });
+      }
     }
   },
 
@@ -111,11 +157,12 @@ export const OneDriveStorage = {
     const { fileId } = await this.findFile(rootId, filePath);
     if (!fileId) return;
     const token = await getToken();
-    await fetch(`${GRAPH}/me/drive/items/${fileId}`, {
+    const res = await fetch(`${GRAPH}/me/drive/items/${fileId}`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newName }),
     });
+    await checkResponse(res, `перейменування "${filePath}"`);
   },
 
   async getFileSizeMB(rootId, filePath) {
@@ -134,6 +181,7 @@ export const OneDriveStorage = {
     let url = `${GRAPH}/me/drive/items/${parentId}/children?$select=id,name,size,lastModifiedDateTime,folder&$top=200`;
     while (url) {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      await checkResponse(res, `читання вмісту папки "${folderPath}"`);
       const data = await res.json();
       allFiles.push(...(data.value || []));
       url = data['@odata.nextLink'] || null;
@@ -169,10 +217,18 @@ function notifyTokenExpired() {
   chrome.runtime.sendMessage({ type: 'TOKEN_EXPIRED_STOP' }).catch(() => {});
 }
 
-async function checkResponse(res) {
+async function checkResponse(res, action) {
   if (res.status === 401) {
     notifyTokenExpired();
-    throw new Error('InvalidAuthenticationToken: токен протух');
+    throw new Error('STORAGE_ERROR: OneDrive — токен протух (401)');
+  }
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const body = await res.json();
+      detail = body?.error?.message || JSON.stringify(body);
+    } catch (_) { /* тіло не JSON — лишаємо detail порожнім */ }
+    throw new Error(`STORAGE_ERROR: OneDrive — ${action || 'запит'} (${res.status}): ${detail}`);
   }
   return res;
 }

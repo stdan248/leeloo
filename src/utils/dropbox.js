@@ -8,6 +8,30 @@ function buildPath(rootId, filePath) {
   return `${root}/${filePath}`;
 }
 
+// ── Перевірка відповіді API ──────────────────────────────────────────────
+// Раніше: save() взагалі не перевіряв res.ok (найтихіший варіант з усіх трьох
+// драйверів — жодного сигналу про провал); listFolder()/getFileSizeMB() при
+// помилці свідомо повертали "порожньо" (`[]`/`0`), не розрізняючи "файла
+// справді нема" від "запит провалився" (протухлий токен, мережа, 5xx).
+// Dropbox на "шлях не знайдено" відповідає 409 з error_summary
+// 'path/not_found/...' — це єдиний легітимний випадок, коли non-ok відповідь
+// означає не системну проблему, а звичайну "нема, і це нормально" (саме так
+// append()/appendSorted() і використовують read() — щоб почати новий файл).
+// Усе інше не-2xx — STORAGE_ERROR, яка зупиняє весь прогін через processNext.
+async function assertOk(res, action) {
+  if (res.ok) return res;
+  let body = null;
+  try { body = await res.json(); } catch (_) { /* тіло не JSON */ }
+  const summary = body?.error_summary || '';
+  if (res.status === 409 && summary.startsWith('path/not_found')) {
+    const e = new Error(`File not found: ${action || ''}`);
+    e.notFound = true;
+    throw e;
+  }
+  const detail = summary || res.statusText || '';
+  throw new Error(`STORAGE_ERROR: Dropbox — ${action || 'запит'} (${res.status}): ${detail}`);
+}
+
 export const DropboxStorage = {
 
   async read(rootId, filePath) {
@@ -20,7 +44,7 @@ export const DropboxStorage = {
         'Dropbox-API-Arg': JSON.stringify({ path }),
       },
     });
-    if (!res.ok) throw new Error(`File not found: ${filePath}`);
+    await assertOk(res, `читання файлу "${filePath}"`);
     return await res.text();
   },
 
@@ -28,7 +52,7 @@ export const DropboxStorage = {
     const token = await getToken();
     const path = buildPath(rootId, filePath);
     const blob = new Blob([content], { type: 'text/plain; charset=utf-8' });
-    await fetch(`${DBX_CONTENT}/files/upload`, {
+    const res = await fetch(`${DBX_CONTENT}/files/upload`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -37,6 +61,7 @@ export const DropboxStorage = {
       },
       body: blob,
     });
+    await assertOk(res, `збереження файлу "${filePath}"`);
   },
 
     async appendSorted(rootId, filePath, shortWithId, currentNum) {
@@ -78,7 +103,14 @@ export const DropboxStorage = {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ path }),
     });
-    if (!res.ok) return 0;
+    if (!res.ok) {
+      try {
+        await assertOk(res, `перевірка розміру "${filePath}"`);
+      } catch (e) {
+        if (e.notFound) return 0; // файла ще нема — це нормально, розмір 0
+        throw e; // справжня помилка (401/403/5xx) — не маскуємо як "0 МБ"
+      }
+    }
     const data = await res.json();
     return (data.size || 0) / (1024 * 1024);
   },
@@ -92,7 +124,14 @@ export const DropboxStorage = {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ path, limit: 2000 }),
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      try {
+        await assertOk(res, `читання вмісту папки "${folderPath}"`);
+      } catch (e) {
+        if (e.notFound) return []; // папки ще нема — це нормально, порожній список
+        throw e; // справжня помилка — не маскуємо як "порожня папка"
+      }
+    }
     let data = await res.json();
     entries = entries.concat(data.entries || []);
     // Пагінація
@@ -102,7 +141,7 @@ export const DropboxStorage = {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ cursor: data.cursor }),
       });
-      if (!res.ok) break;
+      await assertOk(res, `продовження читання папки "${folderPath}"`); // на паузі краще впасти, ніж мовчки повернути неповний список
       data = await res.json();
       entries = entries.concat(data.entries || []);
     }
@@ -117,11 +156,20 @@ export const DropboxStorage = {
   async getOrCreateFolder(rootId, folderPath) {
     const token = await getToken();
     const path = buildPath(rootId, folderPath);
-    await fetch(`${DBX}/files/create_folder_v2`, {
+    const res = await fetch(`${DBX}/files/create_folder_v2`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ path, autorename: false }),
     });
+    if (!res.ok) {
+      let body = null;
+      try { body = await res.json(); } catch (_) {}
+      const summary = body?.error_summary || '';
+      // 409 path/conflict/folder... — папка вже існує, це очікувано і нормально
+      if (!(res.status === 409 && summary.startsWith('path/conflict'))) {
+        throw new Error(`STORAGE_ERROR: Dropbox — створення папки "${folderPath}" (${res.status}): ${summary || res.statusText}`);
+      }
+    }
     return path;
   },
 };

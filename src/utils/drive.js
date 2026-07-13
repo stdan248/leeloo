@@ -13,6 +13,25 @@ const UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 const fileIdCache = new Map(); // key: `${rootId}::${filePath}` → { fileId, parentId, fileName, size }
 function cacheKey(rootId, filePath) { return `${rootId}::${filePath}`; }
 
+// ── Перевірка відповіді API ──────────────────────────────────────────────
+// Жоден з fetch-запитів нижче раніше не перевіряв response.ok — при 401/403/5xx
+// код просто отримував JSON з полем error замість очікуваних даних і мовчки
+// їхав далі (created.id === undefined → "успішний" save() без файлу на диску;
+// data.files === undefined → listFolder() повертає [], що auto-режим читає
+// як "на диску нічого немає" і переобробляє все з нуля). Тепер будь-яка не-2xx
+// відповідь одразу кидає помилку з префіксом STORAGE_ERROR — це навмисно той
+// самий префікс, який processNext() у service-worker.js розпізнає як системну
+// проблему і зупиняє весь прогін, а не тільки поточну сесію.
+async function assertOk(res, action) {
+  if (res.ok) return res;
+  let detail = '';
+  try {
+    const body = await res.json();
+    detail = body?.error?.message || JSON.stringify(body);
+  } catch (_) { /* тіло не JSON — лишаємо detail порожнім */ }
+  throw new Error(`STORAGE_ERROR: Google Drive — ${action} (${res.status}): ${detail}`);
+}
+
 export const DriveStorage = {
 
   async getOrCreateFolder(parentId, name) {
@@ -21,6 +40,7 @@ export const DriveStorage = {
       `${DRIVE_API}/files?q=name='${name}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id)`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
+    await assertOk(search, `пошук папки "${name}"`);
     const found = await search.json();
     if (found.files?.length) return found.files[0].id;
 
@@ -29,6 +49,7 @@ export const DriveStorage = {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }),
     });
+    await assertOk(create, `створення папки "${name}"`);
     const folder = await create.json();
     return folder.id;
   },
@@ -50,6 +71,7 @@ export const DriveStorage = {
       `${DRIVE_API}/files?q=name='${fileName}' and '${parentId}' in parents and trashed=false&fields=files(id,size)`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
+    await assertOk(search, `пошук файлу "${fileName}"`);
     const found = await search.json();
     const result = { fileId: found.files?.[0]?.id, parentId, fileName, size: found.files?.[0]?.size };
     if (result.fileId) fileIdCache.set(key, result);
@@ -63,6 +85,7 @@ export const DriveStorage = {
     const res = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, {
       headers: { Authorization: `Bearer ${token}` },
     });
+    await assertOk(res, `читання файлу "${filePath}"`);
     return await res.text();
   },
 
@@ -72,11 +95,12 @@ export const DriveStorage = {
     const blob = new Blob([content], { type: 'text/plain; charset=utf-8' });
 
     if (fileId) {
-      await fetch(`${UPLOAD_API}/files/${fileId}?uploadType=media`, {
+      const res = await fetch(`${UPLOAD_API}/files/${fileId}?uploadType=media`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'text/plain' },
         body: blob,
       });
+      await assertOk(res, `оновлення файлу "${filePath}"`);
       // оновлюємо кешований розмір, ID лишається той самий
       fileIdCache.set(cacheKey(rootId, filePath), { fileId, parentId, fileName, size: blob.size });
     } else {
@@ -92,6 +116,7 @@ export const DriveStorage = {
         headers: { Authorization: `Bearer ${token}` },
         body: form,
       });
+      await assertOk(createRes, `створення файлу "${filePath}"`);
       const created = await createRes.json();
       // критичний момент: запам'ятовуємо ID щойно створеного файлу відразу,
       // не чекаючи, поки пошуковий індекс Drive його "побачить"
@@ -136,11 +161,12 @@ export const DriveStorage = {
     const { fileId } = await this.findFile(rootId, filePath);
     if (!fileId) return;
     const token = await getToken();
-    await fetch(`${DRIVE_API}/files/${fileId}`, {
+    const res = await fetch(`${DRIVE_API}/files/${fileId}`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newName }),
     });
+    await assertOk(res, `перейменування "${filePath}"`);
   },
 
   async getFileSizeMB(rootId, filePath) {
@@ -160,6 +186,7 @@ export const DriveStorage = {
     do {
       const url = `${DRIVE_API}/files?q='${parentId}' in parents and trashed=false&fields=nextPageToken,files(id,name,size,modifiedTime)&orderBy=name&pageSize=1000${pageToken ? '&pageToken=' + pageToken : ''}`;
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      await assertOk(res, `читання вмісту папки "${folderPath}"`);
       const data = await res.json();
       allFiles.push(...(data.files || []));
       pageToken = data.nextPageToken || null;
