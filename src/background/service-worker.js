@@ -582,7 +582,18 @@ async function startProcessing(config) {
         safeSendMessage({ type: 'MISSING_FOUND', count: sessionsToProcess.length });
       }
     } catch (err) {
-      console.warn('[SW] Перевірка диска: не вдалося перевірити, обробляємо всі:', err.message);
+      // Раніше тут просто писали попередження в консоль і йшли далі, вважаючи
+      // диск порожнім — бо listFolder() на помилках авторизації/мережі мовчки
+      // повертав []. Тепер драйвери (drive.js) кидають реальну помилку, тож
+      // "не вдалося перевірити" більше не можна плутати з "на диску нічого
+      // немає": getOrCreateFolder() сам створює відсутні папки, тож дійсно
+      // порожній/новий архів сюди взагалі не потрапляє як виняток. Якщо ми
+      // тут — це справжня системна проблема (токен/мережа), і продовжувати,
+      // вдаючи порожній диск, ризикує задвоєнням чи перезаписом наявних файлів.
+      console.error('[SW] Перевірка диска провалилась — зупиняємось:', err.message);
+      await saveRunLog(config, 'STORAGE_ERROR');
+      safeSendMessage({ type: 'STORAGE_ERROR', message: `Не вдалося перевірити наявні файли: ${err.message}` });
+      return { stopped: true };
     }
   }
 
@@ -716,7 +727,7 @@ async function processNext() {
     chrome.action.setBadgeText({ text: `${done}/${total}` });
     chrome.action.setBadgeBackgroundColor({ color: '#4CAF50' });
     try {
-    safeSendMessage({ type: 'PROGRESS', done, total, session: session.id });
+    safeSendMessage({ type: 'PROGRESS', done, total, session: session.id, num: currentNum });
     } catch (_) {}
 
     if (!processingState.running) return { stopped: true };
@@ -751,18 +762,24 @@ async function processNext() {
       safeSendMessage({ type: 'STORAGE_ERROR', message: err.message });
       return;
     }
-    // Інші помилки (413, 400, 401 і т.п.) — рахуємо спроби і зупиняємось
+    // Інші помилки (413, 400, 401 і т.п.) — рахуємо спроби саме для цієї сесії.
+    // Якщо не читається одна конкретна сесія — пропускаємо тільки її і йдемо
+    // далі з рештою; це не системна проблема (як STORAGE_ERROR чи RATE_LIMIT),
+    // тому зупиняти весь прогін через одну зламану сесію немає сенсу.
     processingState.retryCount = (processingState.retryCount || 0) + 1;
-    console.warn(`[SW] Помилка (спроба ${processingState.retryCount}/3):`, err.message);
+    console.warn(`[SW] Помилка (спроба ${processingState.retryCount}/3) на сесії ${currentNum}:`, err.message);
     if (processingState.retryCount >= 3) {
-      console.error('[SW] 3 помилки поспіль — зупиняємось.');
-      processingState.running = false;
+      console.warn(`[SW] Сесія ${currentNum} — 3 невдалі спроби, пропускаємо і йдемо далі.`);
+      processingState.index++;
+      processingState.retryCount = 0;
       await chrome.storage.local.set({ processingState });
-      chrome.action.setBadgeText({ text: '⏸' });
-      chrome.action.setBadgeBackgroundColor({ color: '#F44336' });
-      await saveRunLog(config, 'ERROR_STOP');
-      safeSendMessage({ type: 'ERROR_STOP', message: err.message });
-      return;
+      const done = processingState.index;
+      const total = sessions.length;
+      chrome.action.setBadgeText({ text: `${done}/${total}` });
+      chrome.action.setBadgeBackgroundColor({ color: '#FF9800' });
+      safeSendMessage({ type: 'SKIPPED', session: session.id, num: currentNum, reason: err.message?.slice(0, 100) || 'невідома помилка' });
+      if (!processingState.running) return { stopped: true };
+      return await processNext();
     }
     if (!await interruptibleDelay(5)) return { stopped: true };
     if (!processingState.running) return { stopped: true };
