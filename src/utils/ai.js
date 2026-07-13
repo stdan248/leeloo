@@ -291,12 +291,17 @@ export function checkAiStatus(status, platform) {
   };
   const name = names[platform] || platform;
   switch (status) {
+    // 401/403/404 — проблема з самим ключем/моделлю, однакова для кожної
+    // сесії в цьому прогоні. Позначаємо AUTH_ERROR, щоб processNext() у
+    // service-worker.js зупиняв весь прогін одразу (як STORAGE_ERROR/
+    // RATE_LIMIT), а не "пропускав" сесії одну за одною 3 спроби кожну —
+    // так робив раніше, поки не було коду для розрізнення.
     case 400: throw new Error(`Невірний запит до ${name}. Перевірте API-ключ або модель.`);
-    case 401: throw new Error(`API-ключ ${name} недійсний або відсутній — оновіть ключ у налаштуваннях.`);
-    case 403: throw new Error(`Доступ заборонено (${name}). Перевірте тарифний план або дозволи ключа.`);
+    case 401: { const e = new Error(`API-ключ ${name} недійсний або відсутній — оновіть ключ у налаштуваннях.`); e.code = 'AUTH_ERROR'; throw e; }
+    case 403: { const e = new Error(`Доступ заборонено (${name}). Перевірте тарифний план або дозволи ключа.`); e.code = 'AUTH_ERROR'; throw e; }
     case 413: throw new Error(`Текст сесії занадто великий для ${name} — спробуйте скоротити або змінити модель.`);
     case 429: { const e = new Error(`Перевищено ліміт запитів ${name}. Спробуйте пізніше.`); e.code = 'RATE_LIMIT'; throw e; }
-    case 404: throw new Error(`Модель або endpoint ${name} не знайдено — перевірте назву моделі.`);
+    case 404: { const e = new Error(`Модель або endpoint ${name} не знайдено — перевірте назву моделі.`); e.code = 'AUTH_ERROR'; throw e; }
     case 500:
     case 503: { const e = new Error(`Сервер ${name} тимчасово недоступний. Спробуйте пізніше.`); e.code = 'RATE_LIMIT'; throw e; }
     default:  throw new Error(`Помилка ${status} від ${name}.`);
