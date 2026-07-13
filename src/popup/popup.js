@@ -1794,7 +1794,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   switch (msg.type) {
     case 'PROGRESS':
       setProgress(msg.done, msg.total, msg.archName);
-      log(`Сесія ${msg.session} — готово`, 'ok');
+      log(`Сесія №${msg.num} (${msg.session}) — готово`, 'ok');
       break;
 
     case 'MISSING_FOUND':
@@ -1808,7 +1808,7 @@ chrome.runtime.onMessage.addListener((msg) => {
       break;
 
     case 'SKIPPED':
-      log(`⚡ Сесія ${msg.session} пропущена (${msg.reason})`, 'warn');
+      log(`⚡ Сесія №${msg.num} (${msg.session}) пропущена (${msg.reason})`, 'warn');
       break;
 
     case 'RATE_LIMITED':
