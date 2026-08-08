@@ -497,6 +497,7 @@ function buildLiteConfig() {
     shortDelay: 15,
     limitWaitMinutes: 60,
     skipLast: false,
+    fastScan: false, // не потрібно в Lite — туди йдуть невеликі архіви
     sessions: [],
   };
 }
@@ -673,7 +674,7 @@ function bindLiteEvents() {
     const hint = $('lite-sessions-hint');
     if (hint) { hint.style.display = 'flex'; const _ht = hint.querySelector('span[data-i18n]'); if (_ht) _ht.textContent = t('prefetchLoading'); }
     const config = buildLiteConfig();
-    const result = await chrome.runtime.sendMessage({ type: 'GET_SESSIONS', platform: config.platform });
+    const result = await chrome.runtime.sendMessage({ type: 'GET_SESSIONS', config });
     if (hint) hint.style.display = 'none';
 
     if (result?.error) {
@@ -983,6 +984,7 @@ async function loadSavedSettings() {
     $('num-digits').value = s.numDigits || 4;
     $('arch-size').value = s.archSize || 2;
     $('short-delay').value = s.shortDelay || 65;
+    if ($('fast-scan')) $('fast-scan').checked = !!s.fastScan;
 
     setActiveChip('plat-row', state.platform);
     setActiveChip('stor-row', state.storage);
@@ -1065,6 +1067,7 @@ async function saveSettings() {
       numDigits: parseInt($('num-digits').value),
       archSize: parseFloat($('arch-size').value),
       shortDelay: parseInt($('short-delay').value) || 65,
+      fastScan: $('fast-scan')?.checked || false,
       openrouterModel: getSelectedModel(),
       syncCloud:      state.syncCloud,
       theme:         prev.theme,
@@ -1084,6 +1087,8 @@ function bindEvents() {
     }
   };
   $('btn-consent-no').onclick = () => window.close();
+
+  if ($('fast-scan')) $('fast-scan').onchange = saveSettings;
 
   // Chip rows
   bindChipRow('plat-row', v => {
@@ -1726,7 +1731,7 @@ async function startProcessing() {
 
   await refreshExisting();
 
-  const result = await chrome.runtime.sendMessage({ type: 'GET_SESSIONS', platform: config.platform });
+  const result = await chrome.runtime.sendMessage({ type: 'GET_SESSIONS', config });
   if (result?.error) { log(result.error, 'err'); return; }
 
   let sessions = filterSessions(result || [], config);
@@ -1757,6 +1762,7 @@ function buildConfig() {
     shortDelay: parseInt($('short-delay').value) || 65,
     limitWaitMinutes: 60,
     skipLast: $('skip-last').checked,
+    fastScan: $('fast-scan')?.checked || false,
     sessions: [],
   };
 }

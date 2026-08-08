@@ -302,9 +302,10 @@
                 <li><strong>Всі</strong> — обробляються всі доступні сесії незалежно від того, чи були вони вже додані раніше. Цей режим використовується для повного перестворення архіву або коли потрібно оновити всі дані.</li>
                 <li><strong>Вибрати</strong> — користувач вручну обирає потрібні сесії зі списку. Можна вибирати окремі сесії або вказувати діапазон (наприклад, сесії з 50-ї по 100-ту). Цей режим дає максимальну гнучкість.</li>
               </ul>
-              <p><strong>Додаткова опція (внизу екрана):</strong></p>
+              <p><strong>Додаткові опції (внизу екрана):</strong></p>
               <ul>
                 <li><strong>Пропускати останню (поточну) сесію</strong> — щоб не обробляти незавершену розмову.</li>
+                <li><strong>Вільна обробка</strong> — дозволяє архівувати сесії, навіть якщо додаток не має доступу до перших (найстаріших) розмов зі списку — з будь-яких причин (обмеження платформи, видалені чи приховані сесії, тимчасова недоступність тощо). У звичайному режимі додаток спирається на повний, послідовний перелік сесій від найновішої до найстарішої; «Вільна обробка» знімає цю вимогу й дозволяє коректно продовжити архівування навіть із «дірками» на початку списку.</li>
               </ul>
               <h3 id="pro-check">3.11. Перевірка перед запуском</h3>
               <p>Перед створенням архіву додаток показує підтвердження з основними параметрами:</p>
@@ -688,9 +689,10 @@
                 <li><strong>All</strong> — processes all available sessions regardless of whether they've been added before. This mode is used for a full rebuild or when all data needs updating.</li>
                 <li><strong>Select</strong> — you manually pick sessions from the list. You can select individual sessions or specify a range (e.g., sessions 50 to 100). This mode offers maximum flexibility.</li>
               </ul>
-              <p><strong>Additional option (bottom of the screen):</strong></p>
+              <p><strong>Additional options (bottom of the screen):</strong></p>
               <ul>
                 <li><strong>Skip the last (current) session</strong> — to avoid processing an incomplete conversation.</li>
+                <li><strong>Flexible scan</strong> — lets you archive sessions even when the app doesn't have access to the first (oldest) conversations in the list, for any reason (platform limits, deleted or hidden sessions, temporary unavailability, etc.). Normally the app relies on a complete, sequential list of sessions from newest to oldest; Flexible scan removes that requirement and lets archiving continue correctly even with "gaps" at the start of the list.</li>
               </ul>
               <h3 id="pro-check">3.11. Pre-flight check</h3>
               <p>Before creating the archive, the app shows a confirmation with key parameters:</p>
