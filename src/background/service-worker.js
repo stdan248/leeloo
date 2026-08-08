@@ -138,7 +138,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       break;
 
     case 'GET_SESSIONS':
-      getSessions(msg.platform).then(sendResponse);
+      getSessions(msg.config || { platform: msg.platform }).then(sendResponse);
       return true;
 
     case 'INJECT_SYSTEM_PROMPT':
@@ -1184,7 +1184,16 @@ function waitForTabLoad(tabId) {
 }
 
 // ── Отримати список сесій з платформи ────────────────────────────────────────
-async function getSessions(platform) {
+// config.fastScan (опційно) — "оптимізований пошук нових": не чекаємо повного
+// довантаження списку сесій зі сторінки платформи, а передаємо content-скрипту
+// sessionId вже відомих (зустрічались раніше) сесій з session_meta.json —
+// той зупиняє скрол, щойно зустріне FAST_SCAN_K підряд уже відомих сесій
+// (список завжди new→old, тож усе глибше теж заархівоване). Дефолт (галочка
+// вимкнена) — штатна поведінка, повний скрол без змін.
+const FAST_SCAN_K = 10;
+
+async function getSessions(config) {
+  const platform = config.platform;
   const tabs = await chrome.tabs.query({ url: getPlatformUrl(platform) });
   if (!tabs.length) return { error: 'Вкладку не знайдено. Відкрий ' + platform };
 
@@ -1196,12 +1205,40 @@ async function getSessions(platform) {
     });
   } catch (_) {}
 
+  let knownSessionIds = [];
+  if (config.fastScan) {
+    try {
+      const meta = await loadSessionMeta(config);
+      knownSessionIds = Object.values(meta).map(v => v.sessionId).filter(Boolean);
+      swLog(`[SW] Швидкий пошук: ${knownSessionIds.length} відомих sessionId з session_meta.json`);
+    } catch (e) {
+      console.warn('[SW] Швидкий пошук: не вдалось прочитати session_meta.json —', e.message);
+      knownSessionIds = [];
+    }
+  }
+
   const result = await chrome.scripting.executeScript({
     target: { tabId: tabs[0].id },
-    func: () => Promise.resolve(window.__mbGetSessions?.() || []),
+    func: (knownIds, k) => Promise.resolve(window.__mbGetSessions?.(knownIds, k) || []),
+    args: [knownSessionIds, FAST_SCAN_K],
   });
 
-  return result[0]?.result || [];
+  let sessions = result[0]?.result || [];
+
+  // При fastScan content-скрипт нумерує сесії локально (позиція в урізаному
+  // DOM-списку, не в повному архіві) — 1..N замість справжніх номерів.
+  // Прогоняємо через applySessionMap ЗАРАЗ (той самий виклик потім усе одно
+  // повториться в startProcessing — ідемпотентно, лише зчитає вже проставлені
+  // записи), щоб popup.js фільтрував за справжніми номерами, а не локальними.
+  if (config.fastScan && Array.isArray(sessions) && sessions.length) {
+    const useSessionMap = ['gemini', 'claude', 'deepseek'].includes(platform);
+    if (useSessionMap) {
+      sessions = await applySessionMap(sessions, config);
+      swLog(`[SW] Швидкий пошук: індекси перепризначено через session_map (${sessions.length} сесій)`);
+    }
+  }
+
+  return sessions;
 }
 
 // ── Перевірка ліміту API ─────────────────────────────────────────────────────
