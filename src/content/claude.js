@@ -54,7 +54,14 @@
   };
 
   // ── Автопідвантаження дат для всіх сесій через API ──────────────────────
+  // Лічильник поколінь — див. gemini.js: якщо автозапуск ще не завершив
+  // пагінацію/довантаження дат, а popup.triggerPrefetch() запускає новий
+  // виклик, старий цикл перехоплюється і тихо виходить замість того, щоб
+  // паралельно бити той самий API.
+  if (typeof window.__mbLoadGen !== 'number') window.__mbLoadGen = 0;
+
   window.__mbPrefetchDates = async function() {
+    const myGen = ++window.__mbLoadGen;
     if (!window.__mbOrgIdCached) return;
 
     // Крок 1: отримуємо повний список сесій через API з пагінацією (offset)
@@ -62,6 +69,10 @@
     try {
       let offset = 0;
       while (true) {
+        if (myGen !== window.__mbLoadGen) {
+          console.log('[MB] Claude: префетч перехоплено новим викликом — виходжу (крок 1)');
+          return;
+        }
         const r = await _origFetch(`/api/organizations/${window.__mbOrgIdCached}/chat_conversations?limit=100&offset=${offset}`);
         const data = await r.json();
         if (!Array.isArray(data) || data.length === 0) break;
@@ -76,6 +87,11 @@
       console.log(`[MB] API повернув ${allIds.length} сесій з датами`);
     } catch(e) {
       console.warn('[MB] API список не вдався, беремо з DOM:', e.message);
+    }
+
+    if (myGen !== window.__mbLoadGen) {
+      console.log('[MB] Claude: префетч перехоплено новим викликом — виходжу (перед кроком 2)');
+      return;
     }
 
     // Крок 2: додаємо сесії з DOM яких немає в API
@@ -94,6 +110,10 @@
     if (missing.length > 0) {
       console.log(`[MB] Підвантаження дат для ${missing.length} сесій...`);
       for (const id of missing) {
+        if (myGen !== window.__mbLoadGen) {
+          console.log('[MB] Claude: префетч перехоплено новим викликом — виходжу (крок 3)');
+          return;
+        }
         if (__mbSessionDates[id]) continue;
         try {
           const r = await _origFetch(`/api/organizations/${window.__mbOrgIdCached}/chat_conversations/${id}?tree=True&rendering_mode=messages&render_all_tools=true`);

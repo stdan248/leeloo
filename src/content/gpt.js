@@ -42,7 +42,14 @@
   const _origFetch = window.fetch;
 
   // ── Скролінг sidebar до кінця щоб завантажити всі сесії ─────────────────
+  // Лічильник поколінь: новий виклик __mbLoadAllSessions перехоплює
+  // керування у попереднього ще не завершеного циклу (автозапуск vs
+  // ручний виклик з popup/SW) — старий цикл тихо завершується замість
+  // паралельного скролу того самого sidebar.
+  if (typeof window.__mbLoadGen !== 'number') window.__mbLoadGen = 0;
+
   window.__mbLoadAllSessions = function () {
+    const myGen = ++window.__mbLoadGen;
     return new Promise((resolve) => {
 
       function startScroll() {
@@ -55,6 +62,11 @@
         let attempts = 0;
 
         function scrollAndCheck() {
+          if (myGen !== window.__mbLoadGen) {
+            console.log('[MB] GPT: цикл скролу перехоплено новим викликом — виходжу');
+            resolve();
+            return;
+          }
           attempts++;
           const lastItem = sidebar.querySelector('li:last-child');
           if (lastItem) lastItem.scrollIntoView();

@@ -16,8 +16,33 @@
     }
   }
 
+  // ── Витяг сирих sessionId з DOM у поточному порядку (нові зверху) ───────
+  function extractRawIds() {
+    const ids = [];
+    document.querySelectorAll('a[href*="/app/"]').forEach((el) => {
+      const href = el.getAttribute('href') || '';
+      const rawId = (href.split('/app/')[1] || '').split('?')[0].split('#')[0];
+      if (rawId && rawId.length >= 8 && /^[0-9a-f_]+$/i.test(rawId)) ids.push(rawId);
+    });
+    return ids;
+  }
+
   // ── Скролінг sidebar до кінця щоб завантажити всі сесії ─────────────────
-  window.__mbLoadAllSessions = function () {
+  // knownIds/K (опційно) — "швидка зупинка": якщо в DOM-порядку (нові зверху,
+  // старіші довантажуються в кінець) останні K сесій підряд вже відомі
+  // (є в knownIds — sessionId з session_meta.json), далі скролити немає сенсу:
+  // усе, що глибше, теж уже заархівоване. Дефолтна поведінка (без knownIds)
+  // не змінюється — чекаємо повної стабілізації, як і раніше.
+  // Лічильник поколінь: кожен новий виклик __mbLoadAllSessions "перехоплює"
+  // керування у попереднього ще не завершеного циклу (наприклад, автозапуск
+  // без knownIds vs. ручний fastScan-виклик з knownIds/K) — старий цикл
+  // тихо завершується на наступній ітерації замість того, щоб скролити
+  // паралельно з новим.
+  if (typeof window.__mbLoadGen !== 'number') window.__mbLoadGen = 0;
+
+  window.__mbLoadAllSessions = function (knownIds, K) {
+    const myGen = ++window.__mbLoadGen;
+    const knownSet = (knownIds && knownIds.length) ? new Set(knownIds) : null;
     return new Promise(async (resolve) => {
       await ensureSidebarOpen();
 
@@ -40,6 +65,11 @@
       let attempts = 0;
 
       function scrollAndCheck() {
+        if (myGen !== window.__mbLoadGen) {
+          console.log('[MB] Gemini: цикл скролу перехоплено новим викликом — виходжу');
+          resolve();
+          return;
+        }
         attempts++;
         // Скролимо sidebar до низу щоб підвантажити старіші сесії
         sidebar.scrollTop = sidebar.scrollHeight;
@@ -54,6 +84,16 @@
 
         console.log(`[MB] Gemini sidebar scroll: ${count} сесій, стабільно: ${stableFor}`);
 
+        if (knownSet && K && count >= K) {
+          const ids = extractRawIds();
+          const tail = ids.slice(-K); // найстаріші з поки завантажених (кінець DOM-списку)
+          if (tail.length === K && tail.every((id) => knownSet.has(id))) {
+            console.log(`[MB] Gemini: швидка зупинка — останні ${K} сесій вже відомі`);
+            resolve();
+            return;
+          }
+        }
+
         const atBottom = sidebar.scrollTop + sidebar.clientHeight >= sidebar.scrollHeight - 10;
         if ((stableFor >= 10 && atBottom) || attempts >= MAX_ATTEMPTS) {
           console.log(`[MB] Gemini: завантажено ${count} сесій (atBottom: ${atBottom})`);
@@ -67,9 +107,9 @@
     });
   };
 
-  window.__mbGetSessions = async function () {
-    // Спочатку завантажуємо всі сесії через скролінг
-    await window.__mbLoadAllSessions();
+  window.__mbGetSessions = async function (knownIds, K) {
+    // Спочатку завантажуємо сесії через скролінг (knownIds/K вмикають швидку зупинку, якщо передані)
+    await window.__mbLoadAllSessions(knownIds, K);
 
     const sessions = [];
     const seen = new Set();

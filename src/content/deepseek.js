@@ -14,7 +14,12 @@
   }
 
   // ── Скролінг sidebar до кінця щоб завантажити всі сесії ─────────────────
+  // Лічильник поколінь — див. gemini.js/gpt.js: новий виклик перехоплює
+  // керування у попереднього ще не завершеного циклу.
+  if (typeof window.__mbLoadGen !== 'number') window.__mbLoadGen = 0;
+
   window.__mbLoadAllSessions = function () {
+    const myGen = ++window.__mbLoadGen;
     return new Promise(async (resolve) => {
       await ensureSidebarOpen();
 
@@ -32,6 +37,11 @@
       let attempts = 0;
 
       function scrollAndCheck() {
+        if (myGen !== window.__mbLoadGen) {
+          console.log('[MB] DeepSeek: цикл скролу перехоплено новим викликом — виходжу');
+          resolve();
+          return;
+        }
         attempts++;
         sidebar.scrollTop = sidebar.scrollHeight;
 
