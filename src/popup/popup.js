@@ -1829,7 +1829,7 @@ chrome.runtime.onMessage.addListener((msg) => {
       break;
 
     case 'RATE_LIMITED_STOP':
-      setStatus('Ліміт вичерпано — зупинення. Спробуй pivot UTC.', 'warn');
+      setStatus(t('rateLimitStop'), 'warn');
       log('Ліміт API вичерпано після 3 спроб. Відновлення — кнопка "Продовжити зараз".', 'warn');
       toggle('limit-banner', true);
       break;
