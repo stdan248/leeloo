@@ -183,7 +183,7 @@ function getApiConfig(platform, apiKey = '', openrouterModel = null) {
       },
     },
     gemini: {
-      url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${openrouterModel || 'gemini-2.5-flash'}:generateContent?key=${apiKey}`,
       headers: { 'Content-Type': 'application/json' },
       body: {
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
@@ -235,7 +235,7 @@ function getApiConfig(platform, apiKey = '', openrouterModel = null) {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: {
-        model: 'qwen-plus',
+        model: openrouterModel || 'qwen-plus',
         max_tokens: 12000,
         messages: [{ role: 'system', content: SYSTEM_PROMPT }],
       },
@@ -247,7 +247,7 @@ function getApiConfig(platform, apiKey = '', openrouterModel = null) {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: {
-        model: 'Qwen/Qwen2.5-72B-Instruct',
+        model: openrouterModel || 'Qwen/Qwen2.5-72B-Instruct',
         max_tokens: 12000,
         messages: [{ role: 'system', content: SYSTEM_PROMPT }],
       },
@@ -259,7 +259,7 @@ function getApiConfig(platform, apiKey = '', openrouterModel = null) {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: {
-        model: 'mistral-small-latest',
+        model: openrouterModel || 'mistral-small-latest',
         max_tokens: 12000,
         messages: [{ role: 'system', content: SYSTEM_PROMPT }],
       },
