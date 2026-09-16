@@ -165,21 +165,57 @@
   };
 
   // ── Витяг повного тексту поточної сесії ───────────────────────────────────
-  window.__mbGetSessionContent = function () {
-    const messages = [];
+  // Раніше парсили DOM ([data-testid="user-message"], [data-cds="Prose"]),
+  // але це виявилось крихким з двох причин: (1) верстка claude.ai міняється
+  // без попередження, (2) для довгих сесій Claude віртуалізує список
+  // повідомлень — старі просто зникають з DOM при скролі, а не довантажуються
+  // (на відміну від Gemini). Тому тепер тягнемо дані напряму з того самого
+  // API, який уже використовує __mbPrefetchDates — без DOM, без скролу.
+  const ROOT_PARENT = '00000000-0000-4000-8000-000000000000';
 
-    const els = document.querySelectorAll(
-      '[class*="font-user-message"], [class*="font-claude-response"]'
-    );
+  window.__mbGetSessionContent = async function () {
+    try {
+      const orgId = window.__mbOrgIdCached;
+      const sessionId = location.pathname.split('/').pop();
+      if (!orgId || !sessionId) return '';
 
-    els.forEach(el => {
-      const isUser = el.className.includes('font-user-message');
-      const role = isUser ? 'User' : 'Claude';
-      const text = el.textContent?.trim();
-      if (text) messages.push(`[${role}]\n${text}`);
-    });
+      const r = await fetch(`/api/organizations/${orgId}/chat_conversations/${sessionId}?tree=True&rendering_mode=messages&render_all_tools=true`);
+      if (!r.ok) return '';
+      const data = await r.json();
+      const msgs = data.chat_messages || [];
+      if (!msgs.length) return '';
 
-    return messages.join('\n\n---\n\n');
+      const byUuid = new Map(msgs.map(m => [m.uuid, m]));
+
+      // tree=True повертає ВСІ гілки (включно з відредагованими/перегенерованими
+      // повідомленнями). Щоб отримати тільки реальну, активну розмову — йдемо
+      // по parent_message_uuid від current_leaf_message_uuid назад до кореня.
+      const chain = [];
+      let cur = data.current_leaf_message_uuid;
+      let guard = 0;
+      while (cur && cur !== ROOT_PARENT && byUuid.has(cur) && guard++ < 5000) {
+        const m = byUuid.get(cur);
+        chain.push(m);
+        cur = m.parent_message_uuid;
+      }
+      chain.reverse();
+
+      const messages = [];
+      chain.forEach(m => {
+        const role = m.sender === 'human' ? 'User' : 'Claude';
+        const text = (m.content || [])
+          .filter(b => b.type === 'text' && b.text)
+          .map(b => b.text.trim())
+          .filter(Boolean)
+          .join('\n\n');
+        if (text) messages.push(`[${role}]\n${text}`);
+      });
+
+      return messages.join('\n\n---\n\n');
+    } catch (e) {
+      console.warn('[MB] Claude: API-екстракція фулу не вдалась:', e.message);
+      return '';
+    }
   };
 
   // ── ID і назва поточної сесії ─────────────────────────────────────────────
