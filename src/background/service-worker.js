@@ -1045,7 +1045,9 @@ async function fetchSessionContent(session, config) {
   const waitTime = noScroll ? 1500 : 2000;
   await new Promise(r => setTimeout(r, waitTime));
 
-  // Gemini потребує скролінгу для lazy loading — Claude/GPT/DeepSeek завантажують все одразу
+  // Gemini потребує скролінгу для lazy loading — Claude тепер читає контент
+  // напряму з API (див. claude.js), тому DOM/скрол йому більше не потрібен;
+  // GPT/DeepSeek і так завантажують усе одразу
   if (!noScroll) {
     // Запускаємо скролер в сторінці — він сигналізує через window.__mbScrollDone
     await chrome.scripting.executeScript({
@@ -1246,7 +1248,7 @@ async function checkLimit(apiKey, platform, openrouterModel = null) {
   try {
     let url, options;
     if (platform === 'gemini') {
-      url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+      url = `https://generativelanguage.googleapis.com/v1beta/models/${openrouterModel || 'gemini-2.5-flash'}:generateContent?key=${apiKey}`;
       options = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1283,21 +1285,21 @@ async function checkLimit(apiKey, platform, openrouterModel = null) {
       options = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: 'qwen-plus', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+        body: JSON.stringify({ model: openrouterModel || 'qwen-plus', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
       };
     } else if (platform === 'huggingface') {
       url = 'https://router.huggingface.co/v1/chat/completions';
       options = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: 'Qwen/Qwen2.5-72B-Instruct', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+        body: JSON.stringify({ model: openrouterModel || 'Qwen/Qwen2.5-72B-Instruct', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
       };
     } else if (platform === 'mistral') {
       url = 'https://api.mistral.ai/v1/chat/completions';
       options = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: 'mistral-small-latest', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+        body: JSON.stringify({ model: openrouterModel || 'mistral-small-latest', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
       };
     } else if (platform === 'groq') {
       url = 'https://api.groq.com/openai/v1/chat/completions';
