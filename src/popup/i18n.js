@@ -45,7 +45,7 @@ export const LANG = {
 
     syncTitle:        'Синхронізація з хмарою',
     btnSyncAnalyze:   'Аналіз',
-    btnSyncToCloud:   'Local ↑ Cloud',
+    btnSyncToCloud:   'Cloud ↑ Local',
     btnSyncToLocal:   'Cloud ↓ Local',
 
     card23Title:      'Вибір сесій',
@@ -192,6 +192,8 @@ export const LANG = {
     contextTrimmed:   'обробка скорочена до',
     symbols:          'символів',
     archiveLabel:     'архів:',
+    integrityWarnShort: 'можливі пропущені репліки',
+    integrityWarnDone: '{n} сесій з можливими пропусками — перевірте full-файли',
     copyOk:           'Скопійовано ✓',
     copyBtn:          'Скопіювати',
 
@@ -207,9 +209,10 @@ export const LANG = {
     shortBoth:    'Зберігає short_NNN.txt і блоки short_NNN-MMM.txt.',
 
     // STOR_LABELS
-    storDrive:    'Google Drive — ID кореневого папки',
-    storOnedrive: 'OneDrive — ID папки',
-    storDropbox:  'Dropbox — шлях до папки',
+    cloudIdPh:    'Поділитися → Копіювати посилання',
+    storDrive:    'Google Drive — посилання на папку',
+    storOnedrive: 'OneDrive — посилання на папку',
+    storDropbox:  'Dropbox — посилання на папку',
     storLocal:    'Локальна папка',
 
     // ARCHIVE_MODE_INFO
@@ -293,7 +296,7 @@ export const LANG = {
 
     syncTitle:        'Cloud sync',
     btnSyncAnalyze:   'Analyze',
-    btnSyncToCloud:   'Local ↑ Cloud',
+    btnSyncToCloud:   'Cloud ↑ Local',
     btnSyncToLocal:   'Cloud ↓ Local',
 
     card23Title:      'Session selection',
@@ -440,6 +443,8 @@ export const LANG = {
     contextTrimmed:   'processing trimmed to',
     symbols:          'characters',
     archiveLabel:     'archive:',
+    integrityWarnShort: 'possible missing replies',
+    integrityWarnDone: '{n} session(s) with possible gaps — check the full files',
     copyOk:           'Copied ✓',
     copyBtn:          'Copy',
 
@@ -455,9 +460,10 @@ export const LANG = {
     shortBoth:    'Saves short_NNN.txt and blocks short_NNN-MMM.txt.',
 
     // STOR_LABELS
-    storDrive:    'Google Drive — root folder ID',
-    storOnedrive: 'OneDrive — folder ID',
-    storDropbox:  'Dropbox — folder path',
+    cloudIdPh:    'Share → Copy link',
+    storDrive:    'Google Drive — folder link',
+    storOnedrive: 'OneDrive — folder link',
+    storDropbox:  'Dropbox — folder link',
     storLocal:    'Local folder',
 
     // ARCHIVE_MODE_INFO

@@ -103,8 +103,8 @@
           <button class="chip" data-v="local" data-i18n="chipLocal">Локально</button>
         </div>
         <div class="field" id="cloud-fields">
-          <div class="field-label" id="stor-label">Google Drive — ID кореневої папки</div>
-          <input type="text" id="cloud-id" placeholder="1AbCdEfGhIjKlMnOpQrStUvW..." />
+          <div class="field-label" id="stor-label">Google Drive — посилання на папку</div>
+          <input type="text" id="cloud-id" data-i18n-ph="cloudIdPh" placeholder="Поділитися → Копіювати посилання" />
         </div>
         <div class="field" id="token-fields">
           <div class="field-label">Access Token <a id="token-link" href="https://developers.google.com/oauthplayground" target="_blank" style="font-size:11px;opacity:0.6;margin-left:6px" data-i18n="tokenGet">отримати →</a></div>
@@ -133,7 +133,7 @@
           <div id="sync-cloud-id-wrap"></div>
           <div class="btn-row" style="margin-top:10px">
             <button class="btn btn-sm" id="btn-sync-analyze" data-i18n="btnSyncAnalyze">🔍 Аналіз</button>
-            <button class="btn btn-sm" id="btn-sync-to-cloud" disabled data-i18n="btnSyncToCloud">Local ↑ Cloud</button>
+            <button class="btn btn-sm" id="btn-sync-to-cloud" disabled data-i18n="btnSyncToCloud">Cloud ↑ Local</button>
             <button class="btn btn-sm" id="btn-sync-to-local" disabled data-i18n="btnSyncToLocal">Cloud ↓ Local</button>
           </div>
           <div id="sync-status" style="display:none;font-size:12px;margin-top:8px;padding:6px;background:var(--bg3);border-radius:6px;word-break:break-all;overflow-wrap:break-word"></div>
@@ -382,6 +382,7 @@
           <div><div class="card-title" data-i18n="doneTitle">Готово</div><div class="card-desc" data-i18n="doneDesc">Системний промпт оновлено автоматично</div></div>
         </div>
         <div class="done-badges" id="done-badges"></div>
+        <div id="done-integrity-warn" style="display:none; margin-bottom:12px; padding:10px 12px; border-radius:8px; background:#fff3e0; color:#e65100; font-size:13px; line-height:1.5"></div>
         <div class="field-label" style="margin-bottom:6px" data-i18n="donePromptLabel">Цей текст можна додати до системного промпту АІ</div>
         <div class="mem-box" id="mem-prompt"></div>
         <div class="btn-row" style="margin-top:6px">

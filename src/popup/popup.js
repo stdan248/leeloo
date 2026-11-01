@@ -183,9 +183,9 @@ function updateLocalPathDisplay(name, granted = true) {
 // ── Синхронізація — UI шар (логіка в sync.js) ────────────────────────────────
 
 const SYNC_CLOUD_LABELS = {
-  drive:    'Google Drive — ID кореневої папки',
-  onedrive: 'OneDrive — ID папки',
-  dropbox:  'Dropbox — шлях до папки',
+  drive:    'Google Drive — посилання на папку',
+  onedrive: 'OneDrive — посилання на папку',
+  dropbox:  'Dropbox — посилання на папку',
 };
 
 const SYNC_TOKEN_LINKS = {
@@ -708,16 +708,26 @@ function bindLiteEvents() {
         liteSetProgress(msg.done, msg.total);
         liteLog(`Сесія ${msg.session} — готово`, 'ok');
         break;
-      case 'DONE':
+      case 'INTEGRITY_WARN':
+        liteLog(`⚠️ Сесія №${msg.num}: ${t('integrityWarnShort')}`, 'warn');
+        break;
+      case 'DONE': {
         clearInterval(liteSwTimer); liteSwTimer = null;
         liteRunning = false; liteStopping = false;
         { const st = document.getElementById('lite-btn-start-text'); if (st) st.textContent = ' ' + t('btnStart'); }
         setLitePlayIcon('play');
         startBtn.style.background = '';
         startBtn.disabled = false;
-        liteSetStatus('Готово ✓', 'ok');
-        liteLog('Архів оновлено', 'ok');
+        const warnCount = (msg.integrityWarnings || []).length;
+        if (warnCount > 0) {
+          liteSetStatus(`⚠️ ${t('integrityWarnDone').replace('{n}', warnCount)}`, 'warn');
+          liteLog(`⚠️ ${t('integrityWarnDone').replace('{n}', warnCount)}`, 'warn');
+        } else {
+          liteSetStatus('Готово ✓', 'ok');
+          liteLog('Архів оновлено', 'ok');
+        }
         break;
+      }
       case 'STOPPED':
         clearInterval(liteSwTimer); liteSwTimer = null;
         liteRunning = false; liteStopping = false;
@@ -1994,7 +2004,7 @@ function startCountdown(seconds) {
   }, 1000);
 }
 
-function buildDoneScreen(systemPrompt) {
+function buildDoneScreen(systemPrompt, integrityWarnings) {
   const badges = [
     'Архів оновлено',
     '_system/ збережено',
@@ -2002,6 +2012,22 @@ function buildDoneScreen(systemPrompt) {
     'Системний промпт ✓',
   ];
   $('done-badges').innerHTML = badges.map(t => `<div class="dbadge">${t}</div>`).join('');
+
+  const warnCount = (integrityWarnings || []).length;
+  const warnBox = $('done-integrity-warn');
+  if (warnBox) {
+    if (warnCount > 0) {
+      warnBox.style.display = 'block';
+      warnBox.innerHTML =
+        `⚠️ ${t('integrityWarnDone').replace('{n}', warnCount)}<br>` +
+        integrityWarnings.slice(0, 10).map(w => `№${w.num}: ${w.issues[0] || ''}`).join('<br>') +
+        (warnCount > 10 ? `<br>…` : '');
+    } else {
+      warnBox.style.display = 'none';
+      warnBox.innerHTML = '';
+    }
+  }
+
   $('mem-prompt').textContent = systemPrompt || '';
 }
 
