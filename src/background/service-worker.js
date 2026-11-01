@@ -623,6 +623,7 @@ async function startProcessing(config) {
     archiveStart: config.numStart || 1,
     archiveEnd: config.numStart || 1,
     sysIndex: maxSysIndex + 1,
+    integrityWarnings: [],
     config,
   };
 
@@ -649,7 +650,7 @@ async function startProcessing(config) {
 async function resumeProcessing() {
   const saved = await chrome.storage.local.get('processingState');
   if (saved.processingState) {
-    processingState = { ...saved.processingState, running: true, paused: false };
+    processingState = { integrityWarnings: [], ...saved.processingState, running: true, paused: false };
   }
   return await processNext();
 }
@@ -704,7 +705,12 @@ async function processNext() {
       // Режим "повний" або "тільки фули"
       const { content: fullText, createdAt: fetchedDate } = await fetchSessionContent(session, config);
       if (fetchedDate && !session.createdAt) session.createdAt = fetchedDate;
-      await saveToArchive('full', fullText, session, config, currentNum);
+      const integrity = await saveToArchive('full', fullText, session, config, currentNum);
+      if (integrity && !integrity.ok) {
+        processingState.integrityWarnings = processingState.integrityWarnings || [];
+        processingState.integrityWarnings.push({ num: currentNum, session: session.id, issues: integrity.issuesDetailed });
+        try { safeSendMessage({ type: 'INTEGRITY_WARN', num: currentNum, session: session.id, issues: integrity.issuesDetailed }); } catch (_) {}
+      }
       await saveSysSession(session, config);
 
       if (config.archiveMode !== 'full_only') {
@@ -818,6 +824,68 @@ async function processNext() {
 }
 
 // ── Збереження в архів ────────────────────────────────────────────────────────
+// ── Перевірка цілісності зібраного фулу ─────────────────────────────────────
+// Легка евристика, однакова для всіх платформ: розбирає маркери [Role] у
+// вже зібраному тексті (той самий формат, що пишуть claude.js/gemini.js/…).
+// Не намагається вгадати ЩО саме випало, лише ловить типові симптоми
+// віртуалізації/ледачого рендеру — випадання цілої репліки, через яке
+// ролі перестають чергуватись, або збір, що зупинився зарано.
+function checkFullIntegrity(text, headerLineOffset = 0) {
+  if (!text || text === '[контент недоступний]' || text.trim().length < 20) {
+    return { ok: false, issues: ['контент порожній або недоступний'], messageCount: 0 };
+  }
+
+  // lineStarts[i] — номер рядка (у самому тексті fullText, БЕЗ заголовка
+  // SESSION_ID/SESSION_DATE файлу), з якого починається блок roles[i].
+  // Рахуємо без зайвих обходів тексту: один прохід по блоках.
+  const blocks = text.split(/\n\n---\n\n/);
+  const roles = [];
+  const lineStarts = [];
+  let line = 1 + headerLineOffset;
+  for (const b of blocks) {
+    const m = b.match(/^\[([^\]]+)\]/);
+    if (m) { roles.push(m[1]); lineStarts.push(line); }
+    line += b.split('\n').length - 1 + 4; // +4 — рядки роздільника '\n\n---\n\n'
+  }
+
+  const issues = [];        // коротко, без номерів рядків — це йде у файл (full_NNNN.txt)
+  const issuesDetailed = []; // з номерами рядків — лише для живого попередження (консоль/попап), у файл не пишемо
+
+  if (roles.length === 0) {
+    const msg = 'не знайдено жодної репліки з маркером ролі — можливо, старий формат збору';
+    return { ok: false, issues: [msg], issuesDetailed: [msg], messageCount: 0 };
+  }
+  if (roles.length === 1) {
+    const msg = 'лише 1 репліка в сесії — можливо, решта не зібралась';
+    issues.push(msg); issuesDetailed.push(msg);
+  }
+  if (roles[0] !== 'User') {
+    const msg = `розмова починається не з User (перша роль: ${roles[0]})`;
+    issues.push(msg); issuesDetailed.push(msg);
+  }
+
+  const repeats = [];        // "Claude#63" — для файлу
+  const repeatsDetailed = []; // "Claude#63 (рядок N)" — для живого попередження
+  for (let i = 1; i < roles.length; i++) {
+    if (roles[i] === roles[i - 1]) {
+      repeats.push(`${roles[i]}#${i + 1}`);
+      repeatsDetailed.push(`${roles[i]}#${i + 1} (рядок ${lineStarts[i]})`);
+    }
+  }
+  if (repeats.length > 0) {
+    issues.push(
+      `${repeats.length} місце(-ь), де дві репліки однієї ролі йдуть підряд — ` +
+      `можливо, випала репліка між ними: ${repeats.slice(0, 5).join(', ')}${repeats.length > 5 ? '…' : ''}`
+    );
+    issuesDetailed.push(
+      `${repeatsDetailed.length} місце(-ь), де дві репліки однієї ролі йдуть підряд — ` +
+      `можливо, випала репліка між ними: ${repeatsDetailed.slice(0, 5).join(', ')}${repeatsDetailed.length > 5 ? '…' : ''}`
+    );
+  }
+
+  return { ok: issues.length === 0, issues, issuesDetailed, messageCount: roles.length };
+}
+
 async function saveToArchive(type, text, session, config, currentNum) {
   const digits = config.numDigits || 4;
   const blockSize = config.blockSize || 50; // шортів на блок
@@ -827,14 +895,27 @@ async function saveToArchive(type, text, session, config, currentNum) {
   if (type === 'full') {
     const filePath = `${config.platform}/full/full_${pad(currentNum, digits)}.txt`;
     const createdAt = session.createdAt ? `SESSION_DATE: ${session.createdAt.slice(0,19).replace('T',' ')}\n` : '';
+
+    // Номери рядків у "живому" попередженні (консоль/попап) мають вказувати на
+    // рядок у ЗБЕРЕЖЕНОМУ файлі, тобто з урахуванням заголовка SESSION_ID/
+    // SESSION_DATE/INTEGRITY. У сам файл номери рядків НЕ пишемо (issues, без
+    // Detailed) — щоб не роздувати кожен архівований full_NNNN.txt.
+    const integrityProbe = checkFullIntegrity(text);
+    const headerLines = 1 + (createdAt ? 1 : 0) + (integrityProbe.ok ? 0 : 1) + 1; // SESSION_ID + дата? + INTEGRITY? + порожній рядок
+    const integrity = integrityProbe.ok ? integrityProbe : checkFullIntegrity(text, headerLines);
+    const integrityLine = integrity.ok ? '' : `INTEGRITY: WARN — ${integrity.issues.join(' | ')}\n`;
+    if (!integrity.ok) {
+      console.warn(`[SW] Цілісність фулу #${currentNum} (${filePath}): ${integrity.issuesDetailed.join(' | ')}`);
+    }
     try {
-      await storage.save(config.cloudId, filePath, `SESSION_ID: ${session.id}\n${createdAt}\n` + text);
+      await storage.save(config.cloudId, filePath, `SESSION_ID: ${session.id}\n${createdAt}${integrityLine}\n` + text);
       console.log(`[Drive] full збережено: ${filePath}`);
       await updateSessionMeta(config, session.id, currentNum, text.length);
     } catch(e) {
       console.error(`[Drive] ПОМИЛКА збереження full:`, e);
       throw new Error(`STORAGE_ERROR: ${e.message || e}`);
     }
+    return integrity;
 
   } else if (type === 'short') {
     const shortFormat = config.shortFormat || 'both';
@@ -900,9 +981,15 @@ await saveRunLog(config, 'FINALIZE');
   processingState.running = false;
   await chrome.storage.local.set({ processingState });
 
-  chrome.action.setBadgeText({ text: '✓' });
-  chrome.action.setBadgeBackgroundColor({ color: '#2196F3' });
-  try { safeSendMessage({ type: 'DONE', systemPrompt }); } catch (_) {}
+  const integrityWarnings = processingState.integrityWarnings || [];
+  if (integrityWarnings.length > 0) {
+    chrome.action.setBadgeText({ text: '⚠' });
+    chrome.action.setBadgeBackgroundColor({ color: '#FF9800' });
+  } else {
+    chrome.action.setBadgeText({ text: '✓' });
+    chrome.action.setBadgeBackgroundColor({ color: '#2196F3' });
+  }
+  try { safeSendMessage({ type: 'DONE', systemPrompt, integrityWarnings }); } catch (_) {}
 }
 
 // ── Системний промпт ──────────────────────────────────────────────────────────
