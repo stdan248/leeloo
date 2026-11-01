@@ -4,9 +4,22 @@ const DBX = 'https://api.dropboxapi.com/2';
 const DBX_CONTENT = 'https://content.dropboxapi.com/2';
 
 function buildPath(rootId, filePath) {
-  const root = rootId ? '/' + rootId.replace(/^\/+|\/+$/g, '') : '';
+  const r = String(rootId || '').trim();
+  // Після розпізнавання посилання корінь може бути у вигляді "id:..." або "ns:..." —
+  // Dropbox приймає його замість звичайного шляху.
+  if (/^(id|ns):/.test(r)) return `${r.replace(/\/+$/, '')}/${filePath}`;
+  const root = r ? '/' + r.replace(/^\/+|\/+$/g, '') : '';
   return `${root}/${filePath}`;
 }
+
+// Заголовок Dropbox-API-Arg не може містити не-ASCII символи (кирилиця в назві
+// папки ламає fetch) — Dropbox вимагає екранувати їх як \uXXXX.
+function dbxArg(obj) {
+  return JSON.stringify(obj).replace(/[\u007f-\uffff]/g, c =>
+    '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4));
+}
+
+const rootLinkCache = new Map(); // посилання → корінь (шлях або id:...)
 
 // ── Перевірка відповіді API ──────────────────────────────────────────────
 // Раніше: save() взагалі не перевіряв res.ok (найтихіший варіант з усіх трьох
@@ -21,18 +34,67 @@ function buildPath(rootId, filePath) {
 async function assertOk(res, action) {
   if (res.ok) return res;
   let body = null;
-  try { body = await res.json(); } catch (_) { /* тіло не JSON */ }
+  let rawText = '';
+  try {
+    rawText = await res.text();
+    try { body = JSON.parse(rawText); } catch (_) { /* тіло не JSON */ }
+  } catch (_) { /* тіла нема */ }
   const summary = body?.error_summary || '';
   if (res.status === 409 && summary.startsWith('path/not_found')) {
     const e = new Error(`File not found: ${action || ''}`);
     e.notFound = true;
     throw e;
   }
-  const detail = summary || res.statusText || '';
+  // Dropbox на 400 відповідає простим текстом, а не JSON — показуємо його, щоб було видно причину
+  const detail = summary || rawText.trim().slice(0, 300) || res.statusText || '';
   throw new Error(`STORAGE_ERROR: Dropbox — ${action || 'запит'} (${res.status}): ${detail}`);
 }
 
 export const DropboxStorage = {
+
+  // Приймає назву папки (як раніше), адресу з браузера (dropbox.com/home/...)
+  // або посилання «Поділитися». Повертає корінь: шлях або "id:...".
+  async resolveRoot(input) {
+    const v = String(input || '').trim();
+    if (!/^https?:\/\//i.test(v)) return v;
+    if (rootLinkCache.has(v)) return rootLinkCache.get(v);
+
+    let u;
+    try { u = new URL(v); } catch (_) {
+      throw new Error('STORAGE_ERROR: Dropbox — некоректне посилання на папку.');
+    }
+    // Адреса з браузера: dropbox.com/home/<шлях> — шлях уже в самому посиланні
+    const home = u.pathname.match(/^\/home(\/.*)?$/);
+    if (home && /(^|\.)dropbox\.com$/.test(u.hostname)) {
+      const path = decodeURIComponent(home[1] || '');
+      rootLinkCache.set(v, path);
+      return path;
+    }
+
+    // Посилання «Поділитися» — розпізнаємо через API (потрібне право sharing.read)
+    const token = await getToken();
+    const res = await fetch(`${DBX}/sharing/get_shared_link_metadata`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: v }),
+    });
+    try {
+      await assertOk(res, 'розпізнавання посилання на папку');
+    } catch (e) {
+      if (String(e.message).includes('missing_scope')) {
+        e.message += ' — увімкніть право sharing.read у консолі Dropbox і згенеруйте токен заново.';
+      }
+      throw e;
+    }
+    const meta = await res.json();
+    if (meta['.tag'] !== 'folder') {
+      throw new Error('STORAGE_ERROR: Dropbox — посилання веде не на папку.');
+    }
+    const root = meta.path_lower || meta.id;
+    if (!root) throw new Error('STORAGE_ERROR: Dropbox — не вдалося визначити папку за посиланням.');
+    rootLinkCache.set(v, root);
+    return root;
+  },
 
   async read(rootId, filePath) {
     const token = await getToken();
@@ -41,7 +103,7 @@ export const DropboxStorage = {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
-        'Dropbox-API-Arg': JSON.stringify({ path }),
+        'Dropbox-API-Arg': dbxArg({ path }),
       },
     });
     await assertOk(res, `читання файлу "${filePath}"`);
@@ -57,7 +119,7 @@ export const DropboxStorage = {
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/octet-stream',
-        'Dropbox-API-Arg': JSON.stringify({ path, mode: 'overwrite', autorename: false }),
+        'Dropbox-API-Arg': dbxArg({ path, mode: 'overwrite', autorename: false }),
       },
       body: blob,
     });

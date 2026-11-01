@@ -9,7 +9,30 @@ const GRAPH = 'https://graph.microsoft.com/v1.0';
 const folderIdCache = new Map(); // key: `${parentId}::${name}` → folderId
 const fileIdCache   = new Map(); // key: `${rootId}::${filePath}` → { fileId, parentId, fileName, size }
 
+const rootLinkCache = new Map(); // посилання → ID папки
+
 export const OneDriveStorage = {
+
+  // Приймає або ID папки (як раніше), або посилання «Поділитися → Копіювати посилання».
+  // Посилання розпізнається через Microsoft Graph (/shares). Повертає ID папки.
+  async resolveRoot(input) {
+    const v = String(input || '').trim();
+    if (!/^https?:\/\//i.test(v)) return v;
+    if (rootLinkCache.has(v)) return rootLinkCache.get(v);
+    const token = await getToken();
+    const encoded = 'u!' + btoa(unescape(encodeURIComponent(v)))
+      .replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-');
+    const res = await checkResponse(await fetch(
+      `${GRAPH}/shares/${encoded}/driveItem?$select=id,name,folder`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    ), 'розпізнавання посилання на папку');
+    const item = await res.json();
+    if (!item.id || !item.folder) {
+      throw new Error('STORAGE_ERROR: OneDrive — посилання веде не на папку.');
+    }
+    rootLinkCache.set(v, item.id);
+    return item.id;
+  },
 
   async getOrCreateFolder(parentId, name) {
     if (!parentId) throw new Error(`getOrCreateFolder: parentId is undefined for folder "${name}"`);

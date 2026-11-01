@@ -34,6 +34,16 @@ async function assertOk(res, action) {
 
 export const DriveStorage = {
 
+  // Приймає або ID папки (як раніше), або посилання «Поділитися → Копіювати посилання».
+  // Повертає ID папки. Повторний виклик з уже готовим ID повертає його без змін.
+  async resolveRoot(input) {
+    const v = String(input || '').trim();
+    if (!/^https?:\/\//i.test(v)) return v;
+    const m = v.match(/\/folders\/([A-Za-z0-9_-]+)/) || v.match(/[?&]id=([A-Za-z0-9_-]+)/);
+    if (!m) throw new Error('STORAGE_ERROR: Google Drive — у посиланні не знайдено папку. Вставте посилання на теку («Поділитися → Копіювати посилання»).');
+    return m[1];
+  },
+
   async getOrCreateFolder(parentId, name) {
     const token = await getToken();
     const search = await fetch(
