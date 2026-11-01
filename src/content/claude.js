@@ -200,6 +200,14 @@
       }
       chain.reverse();
 
+      // Виклик інструмента (create_file, редагування артефакту тощо) — це
+      // окреме повідомлення в дереві розмови без текстового блоку: сам виклик
+      // і його прихований результат (sender: 'human') тексту не мають і тут
+      // відсіюються. Якщо через це дві РЕАЛЬНІ текстові репліки однієї ролі
+      // опиняються поряд — це не випадання репліки, а одна логічна відповідь,
+      // розбита технічними кроками. Склеюємо такі в один блок, а не пишемо
+      // окремими [Claude]/[User] — інакше контрольку цілісності (service
+      // worker) це хибно читає як втрачену репліку.
       const messages = [];
       chain.forEach(m => {
         const role = m.sender === 'human' ? 'User' : 'Claude';
@@ -208,10 +216,21 @@
           .map(b => b.text.trim())
           .filter(Boolean)
           .join('\n\n');
-        if (text) messages.push(`[${role}]\n${text}`);
+        if (!text) return;
+        const last = messages[messages.length - 1];
+        // Злиття лише для Claude: саме її репліки розбиває видалення
+        // порожніх tool_use/tool_result-кроків. Користувач надсилає рівно
+        // одне повідомлення за хід, тому дві [User] поспіль природно не
+        // бувають — якщо колись трапляться, це сигнал реальної втрати
+        // тексту Claude, і його не варто ховати злиттям.
+        if (last && last.role === role && role === 'Claude') {
+          last.text += '\n\n' + text;
+        } else {
+          messages.push({ role, text });
+        }
       });
 
-      return messages.join('\n\n---\n\n');
+      return messages.map(m => `[${m.role}]\n${m.text}`).join('\n\n---\n\n');
     } catch (e) {
       console.warn('[MB] Claude: API-екстракція фулу не вдалась:', e.message);
       return '';
