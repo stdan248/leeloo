@@ -2,7 +2,7 @@
 // Відповідає за: архівування, Drive API, ліміти, системний промпт
 
 import { getStorage } from '../utils/storage.js';
-import { buildShort, buildMemorySentence } from '../utils/ai.js';
+import { buildShort, buildMemorySentence, extractMemoryFromShort } from '../utils/ai.js';
 import { buildMemoryTxt } from '../utils/memory.js';
 
 
@@ -675,9 +675,9 @@ async function processNext() {
       try {
         const shortText = await storage.read(config.cloudId, `${config.platform}/short/short_${pad(currentNum, config.numDigits || 4)}.txt`);
         session.short = shortText;
-        const memMatch = shortText?.match(/=MEMORY=\s*([\s\S]*?)(?==TAGS=|$)/);
-        if (memMatch) {
-          session.memory = memMatch[1].trim();
+        const memFromShort = extractMemoryFromShort(shortText);
+        if (memFromShort) {
+          session.memory = memFromShort;
         } else {
           // Старий формат — обрізаємо заголовок і генеруємо через AI
           const shortBody = shortText?.replace(/^(SESSION_ID:[^\n]*\n)?(SESSION_NUM:[^\n]*\n)?\n?/, '').trim() || '';
@@ -1447,9 +1447,6 @@ function isValidTag(tag) {
   // Мінімум 3 символи
   if (tag.length < 3) return false;
   
-  // Має бути підкреслення (складений тег, не одне слово)
-  if (!tag.includes('_')) return false;
-  
   // Тільки українська + підкреслення (без англійської, без цифр-ID)
   if (/[a-zA-Z]{4,}/.test(tag)) return false; // допускаємо ШІ, ІІ, AI але не довгі англійські слова
   
@@ -1517,8 +1514,24 @@ async function updateTags(tags, config, sessionNum = null) {
     }
   } catch (_) {} // файлу ще немає — починаємо з нуля
 
-  // Оновлюємо лічильники + зберігаємо номери сесій
-  for (const tag of newTags) {
+  // Перегенерація: якщо ця сесія вже була в tags.txt, спочатку прибираємо її
+  // зі старих тегів (лічильник −1, порожні теги видаляємо), щоб теги не
+  // задвоювались і не лишались старі (пошкоджені). «Сесій обробано» зростає
+  // лише для справді нової сесії.
+  let sessionWasKnown = false;
+  if (sessionNum) {
+    for (const [tag, info] of Object.entries(tagsMap)) {
+      if (info.sessions.includes(sessionNum)) {
+        sessionWasKnown = true;
+        info.sessions = info.sessions.filter(n => n !== sessionNum);
+        info.count = Math.max(0, info.count - 1);
+        if (info.count === 0) delete tagsMap[tag];
+      }
+    }
+  }
+
+  // Оновлюємо лічильники + зберігаємо номери сесій (повтор тега в одній відповіді — раз)
+  for (const tag of new Set(newTags)) {
     if (!tagsMap[tag]) tagsMap[tag] = { count: 0, sessions: [] };
     tagsMap[tag].count++;
     if (sessionNum && !tagsMap[tag].sessions.includes(sessionNum)) {
@@ -1528,7 +1541,7 @@ async function updateTags(tags, config, sessionNum = null) {
 
   // Будуємо новий header
   const now = new Date().toLocaleString('uk-UA');
-  const newSessionCount = sessionCount + 1;
+  const newSessionCount = sessionWasKnown ? sessionCount : sessionCount + 1;
   const headerContent = [
     '=== TAGS ===',
     `Оновлено: ${now}`,
