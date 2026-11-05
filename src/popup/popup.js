@@ -1917,38 +1917,35 @@ async function updateContextWarning(provider, modelId) {
   const el = $('model-context-warn');
   if (!el) return;
 
-  // Ліміт обробки (символи які реально подаємо в AI)
-  const PROCESS_LIMITS = {
-    groq: { default: 15000, 'llama-3.1-8b-instant': 12000 },
-    mistral: { default: 20000 },
-    huggingface: { default: 20000 },
-  };
-
   let hint = '';
+  let info = null;
+  let large = 130000;
   try {
     const mod = await import(chrome.runtime.getURL('src/utils/models.js'));
-    // Підказка з MODEL_META
+    large = mod.LARGE_SESSION_CHARS;
+    if (mod.FIXED_MODEL_PROVIDERS.includes(provider)) modelId = mod.DEFAULT_MODEL[provider];
+    const sel = $('model-select');
+    const opt = sel ? Array.from(sel.options).find(o => o.value === modelId) : null;
+    const liveCtx = opt?.dataset?.context ? parseInt(opt.dataset.context) : null;
+
+    // Підказка: спершу довідник MODEL_META, інакше живі дані провайдера
     const metaHint = mod.getModelHint(modelId);
     if (metaHint) {
       hint = metaHint;
-    } else {
-      // Підказка з живих даних моделі (OpenRouter дає context_length)
-      const sel = $('model-select');
-      const opt = sel ? Array.from(sel.options).find(o => o.value === modelId) : null;
-      if (opt?.dataset?.context) {
-        const ctx = parseInt(opt.dataset.context);
-        const ctxStr = ctx >= 1000000 ? `${ctx/1000000}M` : `${(ctx/1000).toFixed(0)}K`;
-        hint = `${ctxStr} контекст`;
-      }
+    } else if (liveCtx) {
+      const ctxStr = liveCtx >= 1000000 ? `${liveCtx/1000000}M` : `${(liveCtx/1000).toFixed(0)}K`;
+      hint = `${ctxStr} контекст`;
     }
+
+    // Той самий розрахунок, що й в ai.js (контекст моделі + ліміт тарифу)
+    let overhead = 0;
+    try { overhead = (await import(chrome.runtime.getURL('src/utils/ai.js'))).getPromptOverheadChars(); } catch (e) {}
+    info = await mod.getInputCharLimit(provider, modelId, liveCtx, overhead);
   } catch(e) {}
 
-  // Додаємо попередження про скорочення якщо потрібно
-  const provLimits = PROCESS_LIMITS[provider];
-  if (provLimits) {
-    const limit = provLimits[modelId] || provLimits.default;
+  if (info && info.limit < large) {
     el.style.color = 'var(--warn,#FF9800)';
-    el.textContent = (hint ? hint + ' · ' : '') + `${t('contextTrimmed')} ${limit.toLocaleString()} ${t('symbols')}`;
+    el.textContent = (hint ? hint + ' · ' : '') + `${t('contextTrimmed')} ${info.limit.toLocaleString()} ${t('symbols')}`;
   } else if (hint) {
     el.style.color = 'var(--ok,#4CAF50)';
     el.textContent = hint;
