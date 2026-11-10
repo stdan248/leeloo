@@ -2,8 +2,9 @@
 // Відповідає за: архівування, Drive API, ліміти, системний промпт
 
 import { getStorage } from '../utils/storage.js';
-import { buildShort, buildMemorySentence, extractMemoryFromShort } from '../utils/ai.js';
+import { buildShort, buildMemorySentence, extractMemoryFromShort, resetUsageTotals, getAdaptivePause, parseRateLimitHeaders } from '../utils/ai.js';
 import { buildMemoryTxt } from '../utils/memory.js';
+import { saveLearnedRate, tpmNeededFor, charsFitTpm, LARGE_SESSION_CHARS } from '../utils/models.js';
 
 
 // ── SW лог (console + повідомлення в popup) ───────────────────────────────────
@@ -81,10 +82,74 @@ const __mbConsoleLog = console.log.bind(console);
 const __mbConsoleWarn = console.warn.bind(console);
 const __mbConsoleError = console.error.bind(console);
 
-console.log = (...args) => { mbLogCapture('LOG', args); __mbConsoleLog(...args); };
-console.warn = (...args) => { mbLogCapture('WARN', args); __mbConsoleWarn(...args); };
-console.error = (...args) => { mbLogCapture('ERROR', args); __mbConsoleError(...args); };
+// Час у консолі (місцевий, ГГ:ХХ:СС) — додається до першого аргументу, щоб не ламати форматні рядки (%s).
+// У збереженому run-лозі час уже є (ISO, UTC), див. mbLogCapture.
+function mbTime() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function mbStamp(args) {
+  const a = args.slice();
+  if (typeof a[0] === 'string') a[0] = `${mbTime()} ${a[0]}`; else a.unshift(mbTime());
+  return a;
+}
 
+console.log = (...args) => { mbLogCapture('LOG', args); __mbConsoleLog(...mbStamp(args)); };
+console.warn = (...args) => { mbLogCapture('WARN', args); __mbConsoleWarn(...mbStamp(args)); };
+console.error = (...args) => { mbLogCapture('ERROR', args); __mbConsoleError(...mbStamp(args)); };
+
+
+// ── Пауза перед запитом до моделі ────────────────────────────────────────────
+// Базова пауза config.shortDelay — мінімальний інтервал між ПОЧАТКАМИ двох запитів до моделі. Рахується від
+// початку попереднього запиту (раніше — від кінця збору сторінки, тож збір (35–40 с) додавався до паузи, а
+// перший запит прогону чекав зайву хвилину: в логу 10.11 це 110 с на сесію замість ≈ 65 с).
+// Якщо провайдер повідомив хвилинні ліміти (заголовки відповідей), пауза збільшується рівно настільки,
+// щоб їх не перевищити (інакше безкоштовні тарифи дають 429, напр. Mistral 20 000 токенів/хв при запиті ~13 000).
+const LAST_MODEL_CALL_KEY = 'mb_last_model_call';
+let lastModelCall = {}; // { провайдер: мітка часу початку останнього запиту }
+
+async function getLastModelCall(provider) {
+  if (lastModelCall[provider]) return lastModelCall[provider];
+  try {
+    const saved = (await chrome.storage.local.get(LAST_MODEL_CALL_KEY))[LAST_MODEL_CALL_KEY] || {};
+    return saved[provider] || 0;
+  } catch (_) { return 0; }
+}
+
+async function markModelCall(provider) {
+  const now = Date.now();
+  lastModelCall[provider] = now;
+  try {
+    const saved = (await chrome.storage.local.get(LAST_MODEL_CALL_KEY))[LAST_MODEL_CALL_KEY] || {};
+    saved[provider] = now;
+    await chrome.storage.local.set({ [LAST_MODEL_CALL_KEY]: saved });
+  } catch (_) { /* не критично: лишиться пам'ять у змінній */ }
+}
+
+async function modelPause(config) {
+  const provider = config.aiPlatform || config.platform;
+  if (processingState.pauseDone) {
+    processingState.pauseDone = false;
+    if (processingState.running) await markModelCall(provider);
+    return processingState.running;
+  }
+  const base = config.shortDelay || 65;
+  const last = await getLastModelCall(provider);
+  const sinceLast = last ? (Date.now() - last) / 1000 : Infinity;
+  const baseWait = Math.max(0, base - sinceLast);
+  const adaptive = getAdaptivePause(provider);
+  const secs = Math.ceil(adaptive ? Math.max(baseWait, adaptive.seconds) : baseWait);
+  if (adaptive && adaptive.seconds > baseWait) {
+    const lim = [adaptive.tpm ? `${adaptive.tpm} токенів/хв` : '', adaptive.rpm ? `${adaptive.rpm} запитів/хв` : ''].filter(Boolean).join(', ');
+    swLog(`[SW] Пауза ${secs} с замість ${Math.ceil(baseWait)} с: ліміт провайдера ${lim}${adaptive.expected ? `, попередній запит ≈ ${adaptive.expected} токенів` : ''}`);
+  } else if (secs > 0) {
+    swLog(`[SW] Пауза ${secs} с (інтервал між запитами ${base} с від початку попереднього, пройшло ${Number.isFinite(sinceLast) ? Math.round(sinceLast) : '—'} с)`);
+  }
+  const ok = secs > 0 ? await interruptibleDelay(secs) : processingState.running;
+  if (ok) await markModelCall(provider);
+  return ok;
+}
 
 // ── Переривана пауза ─────────────────────────────────────────────────────────
 async function interruptibleDelay(seconds) {
@@ -147,6 +212,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     case 'CHECK_LIMIT':
       checkLimit(msg.apiKey, msg.platform, msg.openrouterModel).then(sendResponse);
+      return true;
+
+    case 'PICK_MODEL':
+      pickMistralModel(msg.apiKey, !!msg.force).then(sendResponse);
       return true;
 
     case 'TOKEN_UPDATED':
@@ -435,6 +504,18 @@ async function saveRunLog(config, reason = 'manual') {
 
 async function startProcessing(config) {
   runLog = [];
+  resetUsageTotals();
+  // Mistral без явно вибраної моделі (Лайт): беремо ту, що реально доступна ключу
+  if (config.aiPlatform === 'mistral' && !config.openrouterModel && config.apiKey) {
+    const pick = await pickMistralModel(config.apiKey);
+    if (!pick.ok) {
+      console.warn('[SW] Автовибір моделі Mistral не вдався:', pick.message);
+      safeSendMessage({ type: 'ERROR_STOP', message: pick.message });
+      return;
+    }
+    config.openrouterModel = pick.model;
+    console.log(`[SW] Mistral: модель ${pick.model}${pick.cached ? ' (збережений вибір)' : ''}`);
+  }
   runLogStartedAt = new Date();
   console.log('[RUN] Старт обробки');
   console.log('[SW] config.storage:', config.storage, 'config.cloudId:', config.cloudId);
@@ -624,6 +705,7 @@ async function startProcessing(config) {
     archiveEnd: config.numStart || 1,
     sysIndex: maxSysIndex + 1,
     integrityWarnings: [],
+    emptyStreak: 0,
     config,
   };
 
@@ -682,7 +764,7 @@ async function processNext() {
           // Старий формат — обрізаємо заголовок і генеруємо через AI
           const shortBody = shortText?.replace(/^(SESSION_ID:[^\n]*\n)?(SESSION_NUM:[^\n]*\n)?\n?/, '').trim() || '';
           console.log(`[SW] _memoryOnly: генеруємо memory для ${currentNum} (${shortBody.length} символів)`);
-          if (!await interruptibleDelay(config.shortDelay || 65)) return { stopped: true };
+          if (!await modelPause(config)) return { stopped: true };
           const memoryText = await buildMemorySentence(shortBody, config.aiPlatform || config.platform, config.apiKey, config.openrouterModel);
           session.memory = memoryText || shortBody.split('\n').find(l => l.trim().length > 20) || '';
         }
@@ -690,20 +772,30 @@ async function processNext() {
       } catch (e) {
         console.warn(`[SW] _memoryOnly: помилка для ${currentNum}:`, e.message);
       }
-    } else if (config.archiveMode === 'shorts_only' || session._shortOnly) {
-      // Режим "тільки шорти" або авто з наявним фулом — читаємо фул з Drive, генеруємо шорт
+    } else if (config.archiveMode === 'shorts_only' || session._shortOnly || session._fullSaved) {
+      // Режим "тільки шорти", авто з наявним фулом, або повторна спроба шорту після збою моделі
+      // (session._fullSaved: фул уже успішно збережено — заново збирати його зі сторінки не треба) —
+      // читаємо фул зі сховища, генеруємо шорт
       const storage = getStorage(config.storage);
       const fullText = await readFullFromDrive(session, config, storage);
-      if (!await interruptibleDelay(config.shortDelay || 65)) return { stopped: true };
-      const { short: shortText, memory: memoryText, tags } = await buildShort(fullText, config.aiPlatform || config.platform, config.apiKey, currentNum, config.openrouterModel, session.createdAt);
-      session.short = shortText;    // зберігаємо для memory.txt
-      session.memory = memoryText;  // стисла суть для memory.txt
-      session.num = currentNum;     // номер сесії
-      await saveToArchive('short', shortText, session, config, currentNum);
-      await updateTags(tags, config, currentNum);
+      if (isEmptyFull(fullBody(fullText))) {
+        // Порожній фул на диску: шорт не генеруємо (див. isEmptyFull)
+        console.warn(`[SW] Сесія #${currentNum}: фул порожній — шорт не генерується`);
+        try { safeSendMessage({ type: 'SKIPPED', session: session.id, num: currentNum, reason: 'порожній контент' }); } catch (_) {}
+      } else {
+        if (!await modelPause(config)) return { stopped: true };
+        const { short: shortText, memory: memoryText, tags } = await buildShort(fullText, config.aiPlatform || config.platform, config.apiKey, currentNum, config.openrouterModel, session.createdAt);
+        session.short = shortText;    // зберігаємо для memory.txt
+        session.memory = memoryText;  // стисла суть для memory.txt
+        session.num = currentNum;     // номер сесії
+        await saveToArchive('short', shortText, session, config, currentNum);
+        await updateTags(tags, config, currentNum);
+      }
     } else {
       // Режим "повний" або "тільки фули"
-      const { content: fullText, createdAt: fetchedDate } = await fetchSessionContent(session, config);
+      const { content: fullText, createdAt: fetchedDate, aborted } = await fetchSessionContent(session, config);
+      // Стоп під час збору: нічого не зберігаємо (інакше лишився б порожній фул сесії, якої ніхто не збирав)
+      if (aborted || !processingState.running) return { stopped: true };
       if (fetchedDate && !session.createdAt) session.createdAt = fetchedDate;
       const integrity = await saveToArchive('full', fullText, session, config, currentNum);
       if (integrity && !integrity.ok) {
@@ -713,9 +805,16 @@ async function processNext() {
       }
       await saveSysSession(session, config);
 
-      if (config.archiveMode !== 'full_only') {
+      if (!isEmptyFull(fullText)) processingState.emptyStreak = 0;
+      if (isEmptyFull(fullText)) {
+        if (await noteEmptySession(session, currentNum, config)) return { stopped: true };
+      } else if (config.archiveMode !== 'full_only') {
+        // Фул і _system уже збережені. Якщо модель збійне (ліміт, обрив, помилка) — повтор піде
+        // лише на шорт, а не на повний цикл (збір сторінки, збереження фулу, META).
+        session._fullSaved = true;
+        await chrome.storage.local.set({ processingState });
         // Повний режим — генеруємо шорт
-        if (!await interruptibleDelay(config.shortDelay || 65)) return { stopped: true };
+        if (!await modelPause(config)) return { stopped: true };
         const { short: shortText, memory: memoryText, tags } = await buildShort(fullText, config.aiPlatform || config.platform, config.apiKey, currentNum, config.openrouterModel, session.createdAt);
         session.short = shortText;    // зберігаємо для memory.txt
         session.memory = memoryText;  // стисла суть для memory.txt
@@ -771,6 +870,7 @@ async function processNext() {
       swLog(`[SW] Rate limit — спроба ${processingState.retryCount}/3, чекаю ${delay} сек`);
       if (!await interruptibleDelay(delay)) return { stopped: true };
       if (!processingState.running) return { stopped: true };
+      processingState.pauseDone = true; // пауза вже витримана — не чекати вдруге перед запитом
       return await processNext();
     }
     if (err.message?.startsWith('STORAGE_ERROR')) {
@@ -824,6 +924,38 @@ async function processNext() {
 }
 
 // ── Збереження в архів ────────────────────────────────────────────────────────
+// ── Порожній збір: перевірка здоров'я парсера (06.11) ───────────────────────
+// Якщо контент сесії не зібрався (верстка сайту змінилась, сесія недоступна), шорт
+// НЕ генерується: інакше модель пише «порожня сесія», а це забруднює шорти, теги й
+// memory.txt (так було із сесією 195). Кілька порожніх поспіль — ознака, що змінилась
+// верстка сайту: обробку зупиняємо з окремим повідомленням.
+const EMPTY_STREAK_LIMIT = 3; // як і ліміт помилок поспіль
+
+function isEmptyFull(text) {
+  return !text || text === '[контент недоступний]' || text.trim().length < 20;
+}
+
+// Тіло фулу без службового заголовка (SESSION_ID / SESSION_NUM / SESSION_DATE / INTEGRITY)
+function fullBody(fileText) {
+  return (fileText || '').replace(/^(?:(?:SESSION_ID|SESSION_NUM|SESSION_DATE|INTEGRITY):[^\n]*\n)+\n?/, '');
+}
+
+// Повертає true, якщо обробку зупинено (підозра на зміну верстки)
+async function noteEmptySession(session, num, config) {
+  processingState.emptyStreak = (processingState.emptyStreak || 0) + 1;
+  console.warn(`[SW] Сесія #${num}: контент порожній — шорт не генерується (порожніх поспіль: ${processingState.emptyStreak})`);
+  try { safeSendMessage({ type: 'SKIPPED', session: session.id, num, reason: 'порожній контент' }); } catch (_) {}
+  if (processingState.emptyStreak < EMPTY_STREAK_LIMIT) return false;
+
+  processingState.running = false;
+  await chrome.storage.local.set({ processingState });
+  chrome.action.setBadgeText({ text: '⏸' });
+  chrome.action.setBadgeBackgroundColor({ color: '#F44336' });
+  await saveRunLog(config, 'PARSER_SUSPECT');
+  safeSendMessage({ type: 'PARSER_SUSPECT', platform: config.platform, count: processingState.emptyStreak });
+  return true;
+}
+
 // ── Перевірка цілісності зібраного фулу ─────────────────────────────────────
 // Легка евристика, однакова для всіх платформ: розбирає маркери [Role] у
 // вже зібраному тексті (той самий формат, що пишуть claude.js/gemini.js/…).
@@ -831,7 +963,7 @@ async function processNext() {
 // віртуалізації/ледачого рендеру — випадання цілої репліки, через яке
 // ролі перестають чергуватись, або збір, що зупинився зарано.
 function checkFullIntegrity(text, headerLineOffset = 0) {
-  if (!text || text === '[контент недоступний]' || text.trim().length < 20) {
+  if (isEmptyFull(text)) {
     return { ok: false, issues: ['контент порожній або недоступний'], messageCount: 0 };
   }
 
@@ -1209,6 +1341,7 @@ async function fetchSessionContent(session, config) {
   const MAX_ATTEMPTS = 20;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (!processingState.running) return { content: '', createdAt: null, aborted: true }; // натиснуто Стоп — не чекати до 20 спроб
     try {
       const result = await chrome.scripting.executeScript({
         target: { tabId },
@@ -1243,7 +1376,15 @@ async function fetchSessionContent(session, config) {
     await new Promise(r => setTimeout(r, 6000));
   }
 
-  return { content: sessionContent || '[контент недоступний]', createdAt: session.createdAt || null };
+  // Дата сесії зі сторінки (якщо список її не дав): ChatGPT показує її лише всередині розмови
+  let pageDate = null;
+  if (!session.createdAt && sessionContent) {
+    try {
+      const r = await chrome.scripting.executeScript({ target: { tabId }, func: () => window.__mbGetCreatedAt?.() || null });
+      pageDate = r[0]?.result || null;
+    } catch (_) { /* дата — необов'язкова */ }
+  }
+  return { content: sessionContent || '[контент недоступний]', createdAt: session.createdAt || pageDate };
 }
 
 function getSessionUrl(platform, sessionId) {
@@ -1281,6 +1422,31 @@ function waitForTabLoad(tabId) {
 // вимкнена) — штатна поведінка, повний скрол без змін.
 const FAST_SCAN_K = 10;
 
+// ── Порожній список сесій: діагностика (перевірка здоров'я парсера, платформний рівень, 06.11) ──
+// Список порожній, коли: скрипт платформи не завантажився на сторінці; бічна панель закрита /
+// не прогрузилась / чатів немає; або змінилась верстка чи адреси чатів, і селектори нічого не
+// знаходять. Розрізняємо за грубою ознакою: скільки посилань узагалі є в бічній панелі.
+const NAV_LINKS_SUSPECT = 3; // стільки посилань у панелі й жодної сесії — підозра, що змінилась верстка
+
+async function diagnoseEmptySessionList(tabId, platform) {
+  let diag = { navLinks: 0, scriptLoaded: true };
+  try {
+    const r = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => ({
+        navLinks: document.querySelectorAll('nav a[href], aside a[href], [role="navigation"] a[href], #history a[href]').length,
+        scriptLoaded: typeof window.__mbGetSessions === 'function',
+      }),
+    });
+    diag = r[0]?.result || diag;
+  } catch (_) { /* діагностика не вдалась — лишаємо найобережнішу причину */ }
+
+  const errorCode = !diag.scriptLoaded ? 'SCRIPT_NOT_LOADED'
+    : (diag.navLinks >= NAV_LINKS_SUSPECT ? 'LAYOUT_CHANGED' : 'PANEL_CLOSED');
+  console.warn(`[SW] Порожній список сесій (${platform}): ${errorCode}, посилань у бічній панелі: ${diag.navLinks}`);
+  return { error: `Список сесій порожній (${platform}): ${errorCode}`, errorCode, platform, navLinks: diag.navLinks };
+}
+
 async function getSessions(config) {
   const platform = config.platform;
   const tabs = await chrome.tabs.query({ url: getPlatformUrl(platform) });
@@ -1314,6 +1480,11 @@ async function getSessions(config) {
 
   let sessions = result[0]?.result || [];
 
+  // Порожній список сесій — не тихий «успіх»: з'ясовуємо причину (платформний рівень перевірки парсера)
+  if (Array.isArray(sessions) && sessions.length === 0) {
+    return await diagnoseEmptySessionList(tabs[0].id, platform);
+  }
+
   // При fastScan content-скрипт нумерує сесії локально (позиція в урізаному
   // DOM-списку, не в повному архіві) — 1..N замість справжніх номерів.
   // Прогоняємо через applySessionMap ЗАРАЗ (той самий виклик потім усе одно
@@ -1331,6 +1502,121 @@ async function getSessions(config) {
 }
 
 // ── Перевірка ліміту API ─────────────────────────────────────────────────────
+// Причина 429: розбираємо заголовки й тіло відповіді провайдера, а не вгадуємо «добовий ліміт».
+// (Раніше будь-який 429 показувався як «Ліміт вичерпано. Спробуй після півночі UTC» — для Mistral
+// це хибно: там ліміти за секунду, за хвилину й за місяць.)
+function describeRateLimit(platform, res, data, model = null) {
+  const q = parseRateLimitHeaders(res.headers);
+  const provText = String(data?.message || data?.error?.message || (typeof data?.error === 'string' ? data.error : '') || '').slice(0, 140);
+  let reason = '';
+  if (q.rpm === 0 || q.tpm === 0) {
+    // Ліміт, а не залишок, дорівнює нулю: для цієї моделі ключу НЕ дозволено жодного запиту
+    // (модель недоступна на поточному тарифі / ключ не має до неї доступу), це не «вичерпано»
+    reason = `для моделі${model ? ' ' + model : ''} ключ має нульовий ліміт (${q.rpm === 0 ? '0 запитів/хв' : '0 токенів/хв'}) — модель недоступна на цьому тарифі або ключ не має до неї доступу; спробуйте іншу модель чи перевірте акаунт у консолі провайдера`;
+  } else if (q.remainingMonth === 0) {
+    reason = `вичерпано місячний обсяг токенів${q.tokensMonth ? ` (ліміт ${q.tokensMonth})` : ''}`;
+  } else if (q.tpm && q.remainingTpm != null && q.remainingTpm < q.tpm * 0.05) { // залишилось менше 5% хвилинного ліміту
+    reason = `вичерпано хвилинний ліміт токенів (залишилось ${q.remainingTpm} з ${q.tpm})`;
+  } else if (q.remainingReq === 0) {
+    reason = 'вичерпано ліміт запитів за хвилину';
+  } else if (provText) {
+    reason = `відповідь провайдера: «${provText}»`;
+  }
+  const wait = q.retryAfter ? ` Зачекайте ~${q.retryAfter} с і спробуйте ще раз.` : '';
+  const daily = (platform === 'openrouter' || /per day|daily/i.test(provText)) ? ' Добовий ліміт скидається о 00:00 UTC.' : '';
+  const fallback = reason ? '' : ' Причину провайдер не уточнив: це може бути ліміт за секунду чи хвилину (зачекайте хвилину), або місячний/акаунтний ліміт (перевірте використання в консолі провайдера).';
+  return `Ліміт запитів (429)${reason ? ': ' + reason + '.' : '.'}${wait}${daily}${fallback}`;
+}
+
+// ── Автовибір робочої моделі Mistral для ключа (07.11) ────────────────────────
+// Безкоштовний ключ може мати нульовий ліміт на модель (429 з x-ratelimit-limit-req-minute: 0)
+// або 403. Так було у ключа Сергія: mistral-small-latest і mistral-small-2603 → 429/0,
+// mistral-large-2512 → 403, ministral-8b-2512 → 200. Користувач Лайта модель не обирає,
+// тож підбираємо за фактичним доступом: перелік моделей ключа → 1-токеновий запит до кожної,
+// від найбільшого контексту, поки не знайдемо ту, що відповідає 200.
+const MISTRAL_PICK_KEY = 'mb_mistral_pick';
+const MISTRAL_PICK_TTL_MS = 24 * 60 * 60 * 1000; // перевибір не частіше ніж раз на добу
+const MISTRAL_PROBE_GAP_MS = 1100;                // безкоштовний ключ: ~1 запит/с
+// Спеціалізовані моделі (не для підсумків): вектори, модерація, OCR, аудіо, код
+const MISTRAL_NOT_GENERAL = /(embed|moderation|ocr|tts|transcri|voxtral|codestral|devstral|labs-|leanstral)/i;
+
+async function keyFingerprint(apiKey) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(apiKey));
+  return Array.from(new Uint8Array(d)).slice(0, 6).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function listMistralChatModels(apiKey) {
+  const res = await fetch('https://api.mistral.ai/v1/models', { headers: { 'Authorization': `Bearer ${apiKey}` } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return (data.data || data.models || [])
+    .filter(m => m.capabilities ? m.capabilities.completion_chat !== false : true)
+    .filter(m => m.id && !/-latest$/.test(m.id) && !MISTRAL_NOT_GENERAL.test(m.id))
+    .map(m => ({ id: m.id, ctx: m.max_context_length || 0 }))
+    .sort((a, b) => b.ctx - a.ctx || a.id.localeCompare(b.id));
+}
+
+async function probeMistralModel(apiKey, model) {
+  const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  const q = parseRateLimitHeaders(res.headers);
+  return { model, status: res.status, ok: res.status === 200, tpm: q.tpm ?? null, rpm: q.rpm ?? null };
+}
+
+// Вибір: перша (за розміром контексту) модель, чий хвилинний ліміт дозволяє прочитати найбільші
+// сесії архіву ПОВНІСТЮ (tpmNeededFor(LARGE_SESSION_CHARS)); якщо такої немає — доступна модель з
+// найбільшим хвилинним лімітом, і користувача попереджаємо, що довгі сесії будуть обрізані.
+// (Модель із 20 000 токенів/хв читає лише ~20 000 символів сесії, а менша модель із 625 000 — усю.)
+function pickResult(r, tried, cached) {
+  const needed = tpmNeededFor(LARGE_SESSION_CHARS);
+  const limited = !!(r.tpm && r.tpm < needed);
+  return { ok: true, model: r.model, tpm: r.tpm, rpm: r.rpm, cached, tried,
+           limited, maxChars: r.tpm ? charsFitTpm(r.tpm) : null };
+}
+
+async function pickMistralModel(apiKey, force = false) {
+  const fp = await keyFingerprint(apiKey);
+  if (!force) {
+    const saved = (await chrome.storage.local.get(MISTRAL_PICK_KEY))[MISTRAL_PICK_KEY];
+    if (saved && saved.fp === fp && Date.now() - saved.ts < MISTRAL_PICK_TTL_MS) {
+      return pickResult({ model: saved.model, tpm: saved.tpm, rpm: saved.rpm }, [], true);
+    }
+  }
+  let models;
+  try { models = await listMistralChatModels(apiKey); }
+  catch (e) { return { ok: false, message: `Не вдалось отримати список моделей Mistral (${e.message}). Перевірте ключ.`, tried: [] }; }
+
+  const needed = tpmNeededFor(LARGE_SESSION_CHARS);
+  const tried = [];
+  const working = [];
+  let chosen = null;
+  for (const m of models) { // усі кандидати: найбільші моделі на безкоштовному рівні мають найменші ліміти, а найкращі за лімітом стоять у кінці списку
+    if (tried.length) await new Promise(r => setTimeout(r, MISTRAL_PROBE_GAP_MS));
+    let r;
+    try { r = await probeMistralModel(apiKey, m.id); }
+    catch (e) { return { ok: false, message: `Помилка зв'язку з Mistral: ${e.message}`, tried }; }
+    tried.push(r);
+    if (r.status === 401) return { ok: false, message: 'API-ключ Mistral недійсний або відсутній — перевірте ключ.', tried };
+    if (!r.ok) continue;
+    working.push(r);
+    if (r.tpm == null || r.tpm >= needed) { chosen = r; break; } // читає найбільші сесії повністю
+  }
+  if (!chosen && working.length) {
+    chosen = working.reduce((best, r) => ((r.tpm || 0) > (best.tpm || 0) ? r : best), working[0]);
+  }
+  if (chosen) {
+    if (chosen.tpm || chosen.rpm) await saveLearnedRate('mistral', chosen.model, { tpm: chosen.tpm || null, rpm: chosen.rpm || null, ts: Date.now() }).catch(() => {});
+    await chrome.storage.local.set({ [MISTRAL_PICK_KEY]: { fp, model: chosen.model, tpm: chosen.tpm, rpm: chosen.rpm, ts: Date.now() } });
+    console.log(`[SW] Mistral: обрано ${chosen.model} (перевірено: ${tried.map(t => `${t.model}→${t.status}${t.tpm ? `/${t.tpm}` : ''}`).join(', ')}; потрібно ≥ ${needed} токенів/хв для найбільших сесій)`);
+    return pickResult(chosen, tried, false);
+  }
+  const sum = tried.map(t => `${t.model}→${t.status}${t.rpm === 0 ? ' (ліміт 0)' : ''}`).join(', ');
+  return { ok: false, message: `Жодна з перевірених моделей Mistral не доступна для цього ключа (${sum || 'список порожній'}). Ймовірно, безкоштовний рівень не активовано в консолі Mistral або ключ не має доступу до моделей.`, tried };
+}
+
 async function checkLimit(apiKey, platform, openrouterModel = null) {
   try {
     let url, options;
@@ -1405,7 +1691,10 @@ async function checkLimit(apiKey, platform, openrouterModel = null) {
     if (res.status === 401) return { ok: false, message: `API-ключ недійсний або відсутній — оновіть ключ у налаштуваннях` };
     if (res.status === 403) return { ok: false, message: `Доступ заборонено — перевірте тарифний план або дозволи ключа` };
     if (res.status === 404) return { ok: false, message: `Модель недоступна — перевірте назву моделі` };
-    if (res.status === 429) return { ok: false, message: 'Ліміт вичерпано. Спробуй після півночі UTC' };
+    if (res.status === 429) {
+      console.warn('[SW] checkLimit 429', platform, Object.fromEntries(res.headers?.entries?.() || []), data);
+      return { ok: false, message: describeRateLimit(platform, res, data, JSON.parse(options.body || '{}').model || openrouterModel || null) };
+    }
     if (res.status === 503) return { ok: false, message: 'Сервіс тимчасово недоступний — спробуйте пізніше' };
     const errMsg = data?.error?.message || '';
     return { ok: false, message: `Помилка ${res.status}${errMsg ? ': ' + errMsg : ''}` };
