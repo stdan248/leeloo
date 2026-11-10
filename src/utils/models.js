@@ -255,7 +255,7 @@ export async function getModels(provider, apiKey = '') {
     models = models.map(m => {
       const meta = MODEL_META[m.id];
       if (!meta) return m;
-      return { ...m, context: m.context || meta.context, maxOutput: m.maxOutput || meta.maxOutput || null, speed: m.speed || meta.speed, cost: m.cost || meta.cost };
+      return { ...m, context: m.context || meta.context, maxOutput: m.maxOutput || meta.maxOutput || null, metaCtx: !m.context && !!meta.context, metaOut: !m.maxOutput && !!meta.maxOutput, speed: m.speed || meta.speed, cost: m.cost || meta.cost };
     });
 
     cache[provider] = { ts: now, models, v: CACHE_SCHEMA };
@@ -268,7 +268,7 @@ export async function getModels(provider, apiKey = '') {
     const fallback = (FALLBACK_MODELS[provider] || []).map(m => {
       const meta = MODEL_META[m.id];
       if (!meta) return m;
-      return { ...m, context: meta.context, maxOutput: meta.maxOutput || null, speed: meta.speed, cost: meta.cost };
+      return { ...m, context: meta.context, maxOutput: meta.maxOutput || null, metaCtx: !!meta.context, metaOut: !!meta.maxOutput, speed: meta.speed, cost: meta.cost };
     });
     return { models: fallback, error: e.message };
   }
@@ -303,6 +303,9 @@ export const RATIOS = {
   outputFitHeadroom: 0.5,      // скільки тексту подавати: шорт (+10%) із запасом +50% має вміститися в стелю відповіді моделі
   charsPerToken: 2,            // перерахунок токени ↔ символи, консервативно для кирилиці
   refreshRetryShare: 0.05,     // повторна спроба оновити список моделей не частіше ніж раз на 5% від TTL кешу
+  selfReportTrust: 0.5,        // значення, які модель повідомила про себе, використовуються на 50% (не перевірені)
+  tpmShareOfRequest: 0.5,      // один запит не більше 50% хвилинного ліміту токенів провайдера (якщо ліміт відомий)
+  pauseMargin: 0.1,            // запас 10% при розрахунку паузи між запитами за хвилинним лімітом
 };
 
 // Модель за замовчуванням для кожного провайдера (збігається з getApiConfig в ai.js)
@@ -349,6 +352,19 @@ async function ensureFreshModels(provider, apiKey) {
   try { await getModels(provider, apiKey || ''); } catch (e) { /* лишаємо наявний кеш / довідник */ }
 }
 
+// Хвилинний ліміт токенів, потрібний, щоб модель прочитала сесію такого розміру ПОВНІСТЮ:
+// текст (символи → токени) + шорт (частка від тексту) мають вміститись у частку хвилинного ліміту.
+export function tpmNeededFor(chars) {
+  const inputTokens = chars / RATIOS.charsPerToken;
+  const totalTokens = inputTokens * (1 + RATIOS.shortShare * (1 + RATIOS.memoryTagsShare));
+  return Math.ceil(totalTokens / RATIOS.tpmShareOfRequest);
+}
+
+// Скільки символів тексту влізе в один запит при такому хвилинному ліміті
+export function charsFitTpm(tpm) {
+  return Math.floor(tpm * RATIOS.tpmShareOfRequest * RATIOS.charsPerToken);
+}
+
 // Стеля відповіді в токенах: максимум відповіді моделі, обмежений часткою контексту
 function outputCeilingTokens(contextTokens, maxOutput) {
   const share = contextTokens ? Math.floor(contextTokens * RATIOS.outputCeilingOfContext) : null;
@@ -356,8 +372,123 @@ function outputCeilingTokens(contextTokens, maxOutput) {
   return maxOutput || share || null;
 }
 
-// Повертає { limit, source, contextTokens, maxOutput, ceilingTokens, tierCap, model }
-// source: 'context' (розмір контексту), 'output' (стеля відповіді моделі), 'tier' (ліміт тарифу провайдера), 'unknown' (контекст невідомий)
+// ── Виявлені ліміти (з помилок API / зі слів моделі) ───────────────────────
+// Для моделей, яких немає в живому списку API, ліміти виявляються автоматично перед обробкою
+// (ai.js: discoverLimits) і зберігаються тут з позначкою джерела.
+const DISCOVERED_KEY = 'mb_model_discovered';
+export const DISCOVERY_TTL_MS = 30 * 24 * 60 * 60 * 1000; // повторне виявлення — раз на ~30 днів
+
+async function loadDiscovered() {
+  return new Promise(resolve => {
+    chrome.storage.local.get(DISCOVERED_KEY, r => resolve(r[DISCOVERED_KEY] || {}));
+  });
+}
+
+export async function getDiscovered(provider, model) {
+  const all = await loadDiscovered();
+  return all[`${provider}:${model}`] || null;
+}
+
+export async function saveDiscovered(provider, model, rec) {
+  const all = await loadDiscovered();
+  all[`${provider}:${model}`] = rec;
+  await new Promise(resolve => chrome.storage.local.set({ [DISCOVERED_KEY]: all }, resolve));
+}
+
+// Хвилинний ліміт токенів, який провайдер повідомив у заголовках відповіді (напр. Mistral:
+// x-ratelimit-limit-tokens-minute). Зберігається, щоб розмір запиту й паузи враховували його вже на першому запиті.
+const LEARNED_RATE_KEY = 'mb_learned_rates';
+
+export async function getLearnedRate(provider, model) {
+  return new Promise(resolve => {
+    chrome.storage.local.get(LEARNED_RATE_KEY, r => resolve((r[LEARNED_RATE_KEY] || {})[`${provider}:${model}`] || null));
+  });
+}
+
+export async function saveLearnedRate(provider, model, rec) {
+  const all = await new Promise(resolve => chrome.storage.local.get(LEARNED_RATE_KEY, r => resolve(r[LEARNED_RATE_KEY] || {})));
+  all[`${provider}:${model}`] = rec;
+  await new Promise(resolve => chrome.storage.local.set({ [LEARNED_RATE_KEY]: all }, resolve));
+}
+
+// Чи треба виявляти ліміти: жива вибірка API вже дала обидва значення — ні;
+// свіжий запис виявлення (у т.ч. «нічого не знайшли») — ні.
+export async function needsDiscovery(provider, model) {
+  try {
+    const cache = await loadCache();
+    const live = cache[provider]?.models?.find(x => x.id === model);
+    if (live && live.context && !live.metaCtx && live.maxOutput && !live.metaOut) return false;
+  } catch (e) { /* кеш недоступний */ }
+  const rec = await getDiscovered(provider, model);
+  if (rec) {
+    const ttl = rec.none ? TTL_MS : DISCOVERY_TTL_MS;
+    if (Date.now() - rec.ts < ttl) return false;
+  }
+  return true;
+}
+
+// Дістає ліміти з тексту помилки API на завеликий запит. Формати різних провайдерів
+// різні й змінюються, тож шукаємо толерантно; невпізнане просто повертає порожній об'єкт.
+export function parseLimitsFromError(text) {
+  const s = String(text || '');
+  const out = {};
+  const num = x => {
+    const n = parseInt(String(x).replace(/[,_\s]/g, ''), 10);
+    return Number.isFinite(n) && n >= 256 && n <= 10_000_000 ? n : null;
+  };
+  let m;
+  // Gemini: "...supported range is from 1 (inclusive) to 65537 (exclusive)"
+  if ((m = s.match(/range is from\s*\d+\s*\(inclusive\)\s*to\s*([\d,]+)\s*\(exclusive\)/i))) {
+    const n = num(m[1]); if (n) out.maxOutput = n - 1;
+  }
+  // Anthropic: "max_tokens: 10000000 > 64000, which is the maximum allowed number of output tokens"
+  if (!out.maxOutput && (m = s.match(/max_tokens:\s*\d+\s*>\s*([\d,]+),?\s*which is the maximum/i))) {
+    const n = num(m[1]); if (n) out.maxOutput = n;
+  }
+  // OpenAI-подібні: "This model supports at most 16384 completion tokens"
+  if (!out.maxOutput && (m = s.match(/supports at most\s*([\d,]+)\s*completion tokens/i))) {
+    const n = num(m[1]); if (n) out.maxOutput = n;
+  }
+  // DeepSeek / Qwen: "valid range of max_tokens is [1, 8192]" / "Range of max_tokens should be [1, 8192]"
+  if (!out.maxOutput && (m = s.match(/max_tokens[^\[\]]{0,60}\[\s*1\s*,\s*([\d,]+)\s*\]/i))) {
+    const n = num(m[1]); if (n) out.maxOutput = n;
+  }
+  // Загальне: "max_tokens ... less than or equal to 32768"
+  if (!out.maxOutput && (m = s.match(/max(?:_completion)?_tokens[^.]{0,80}?(?:less than or equal to|at most|no more than|<=)\s*`?([\d,]+)/i))) {
+    const n = num(m[1]); if (n) out.maxOutput = n;
+  }
+  // Контекст: "maximum context length is 128000 tokens" / "exceeds the maximum number of tokens allowed (1048576)"
+  if ((m = s.match(/(?:maximum context length|context (?:length|window|size))(?: is| of)?\s*(?:is\s*)?([\d,]{4,})\s*tokens?/i))) {
+    const n = num(m[1]); if (n) out.context = n;
+  }
+  if (!out.context && (m = s.match(/exceeds the maximum number of tokens allowed\s*\(?([\d,]+)/i))) {
+    const n = num(m[1]); if (n) out.context = n;
+  }
+  return out;
+}
+
+// Чи дав живий список API саме це значення (а не довідник) для моделі
+export async function hasLiveField(provider, model, field) {
+  try {
+    const live = (await loadCache())[provider]?.models?.find(x => x.id === model);
+    if (!live) return false;
+    return field === 'context' ? !!(live.context && !live.metaCtx) : !!(live.maxOutput && !live.metaOut);
+  } catch (e) { return false; }
+}
+
+// Чи є значення (context / maxOutput) для моделі в довіднику MODEL_META
+export function metaHas(model, field) {
+  return !!(model && MODEL_META[model]?.[field]);
+}
+
+function firstOf(list) {
+  return list.length ? { value: list[0][0], source: list[0][1] } : { value: null, source: 'unknown' };
+}
+
+// Повертає { limit, source, contextTokens, maxOutput, ceilingTokens, tierCap, model, sources }
+// source: 'context' (розмір контексту), 'output' (стеля відповіді моделі), 'tier' (ліміт тарифу провайдера), 'tpm' (хвилинний ліміт, повідомлений провайдером), 'unknown' (контекст невідомий)
+// sources: звідки взято контекст і максимум відповіді — 'api-list' (живий список API), 'api-error'
+//   (з тексту помилки API), 'довідник' (MODEL_META), 'self-report' (зі слів моделі, не перевірено), 'unknown'
 // liveCtx — розмір контексту з живих даних провайдера, якщо вже відомий викликачу
 // overheadChars — довжина системного промпту й few-shot (вимірюється в ai.js)
 // apiKey — якщо передано (service worker), довідник моделей за потреби оновлюється з API провайдера
@@ -366,19 +497,30 @@ export async function getInputCharLimit(provider, modelId = null, liveCtx = null
     ? DEFAULT_MODEL[provider]
     : (modelId || DEFAULT_MODEL[provider] || null);
 
-  let contextTokens = liveCtx || null;
-  let maxOutput = null;
+  // кандидати в порядку довіри: живий список API → з помилки API → довідник → зі слів моделі
+  const ctxC = [];
+  const outC = [];
+  if (liveCtx) ctxC.push([liveCtx, 'api-list']);
   if (model) {
     if (apiKey !== null) await ensureFreshModels(provider, apiKey);
-    try {
-      const cache = await loadCache();
-      const live = cache[provider]?.models?.find(x => x.id === model);
-      contextTokens = contextTokens || live?.context || null;
-      maxOutput = live?.maxOutput || null;
-    } catch (e) { /* кеш недоступний — йдемо далі */ }
-    contextTokens = contextTokens || MODEL_META[model]?.context || null;
-    maxOutput = maxOutput || MODEL_META[model]?.maxOutput || null;
+    let live = null;
+    try { live = (await loadCache())[provider]?.models?.find(x => x.id === model) || null; } catch (e) { /* кеш недоступний */ }
+    let rec = null;
+    try { rec = await getDiscovered(provider, model); } catch (e) { /* сховище недоступне */ }
+    const f = rec?.fields || {};
+    if (live?.context && !live.metaCtx) ctxC.push([live.context, 'api-list']);
+    if (live?.maxOutput && !live.metaOut) outC.push([live.maxOutput, 'api-list']);
+    if (f.context?.source === 'api-error') ctxC.push([f.context.value, 'api-error']);
+    if (f.maxOutput?.source === 'api-error') outC.push([f.maxOutput.value, 'api-error']);
+    if (MODEL_META[model]?.context) ctxC.push([MODEL_META[model].context, 'довідник']);
+    if (MODEL_META[model]?.maxOutput) outC.push([MODEL_META[model].maxOutput, 'довідник']);
+    if (f.context?.source === 'self-report') ctxC.push([Math.floor(f.context.value * RATIOS.selfReportTrust), 'self-report']);
+    // Самозвіт моделі про макс. відповідь НЕ використовується: він лише штучно обмежував би текст (ministral-14b заявила 4096 і втратила 87% сесії)
   }
+  const ctx = firstOf(ctxC);
+  const out = firstOf(outC);
+  const contextTokens = ctx.value;
+  const maxOutput = out.value;
 
   const ceilingTokens = outputCeilingTokens(contextTokens, maxOutput);
 
@@ -398,11 +540,25 @@ export async function getInputCharLimit(provider, modelId = null, liveCtx = null
     if (fitLimit < limit) { limit = fitLimit; source = 'output'; }
   }
 
+  // Хвилинний ліміт токенів, повідомлений самим провайдером (з заголовків попередніх відповідей):
+  // один запит (текст + відповідь) не має перевищувати частку цього ліміту
+  let learnedTpm = null;
+  if (model) {
+    try { learnedTpm = (await getLearnedRate(provider, model))?.tpm || null; } catch (e) { /* сховище недоступне */ }
+  }
+
+  // Статична межа тарифу (наше припущення) діє лише поки провайдер не повідомив реальний ліміт
   const caps = PROVIDER_REQUEST_CAPS[provider];
   const tierCap = caps ? ((model && caps[model]) || caps.default) : null;
-  if (tierCap && tierCap < limit) { limit = tierCap; source = 'tier'; }
+  if (tierCap && !learnedTpm && tierCap < limit) { limit = tierCap; source = 'tier'; }
 
-  return { limit, source, contextTokens, maxOutput, ceilingTokens, tierCap, model };
+  if (learnedTpm) {
+    const tpmCap = Math.floor(learnedTpm * RATIOS.tpmShareOfRequest * RATIOS.charsPerToken);
+    if (tpmCap < limit) { limit = tpmCap; source = 'tpm'; }
+  }
+
+  return { limit, source, contextTokens, maxOutput, ceilingTokens, tierCap, learnedTpm, model,
+           sources: { context: ctx.source, maxOutput: out.source } };
 }
 
 // Бюджет відповіді (max_tokens) для запиту: очікувана довжина шорту у відсотках

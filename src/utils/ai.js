@@ -1,6 +1,6 @@
 // utils/ai.js — генерація шорту через API моделі
 
-import { getInputCharLimit, outputTokensFor, RATIOS } from './models.js';
+import { getInputCharLimit, outputTokensFor, RATIOS, needsDiscovery, saveDiscovered, parseLimitsFromError, metaHas, hasLiveField, saveLearnedRate, getLearnedRate } from './models.js';
 
 const SYSTEM_PROMPT = `Ти архіваріус розмов між людиною і ШІ-моделлю.
 Отримуєш повний текст сесії і створюєш стислий огляд + теги.
@@ -101,12 +101,222 @@ export function getPromptOverheadChars() {
   return SYSTEM_PROMPT.length + buildFewShot().length;
 }
 
+// ── Виявлення лімітів моделі та облік витрачених токенів ──────────────────────
+// Один свідомо завеликий запит із мінімальним текстом: API відхиляє його на перевірці
+// параметрів (нічого не генерується), а в тексті помилки зазвичай названо реальні ліміти.
+const PROBE_MAX_TOKENS = 10_000_000;
+
+async function postMinimal(platform, apiKey, openrouterModel, prompt, maxTokens) {
+  const apiConfig = getApiConfig(platform, apiKey, openrouterModel);
+  const body = { ...apiConfig.body };
+  if (platform === 'gemini') {
+    body.contents = [{ parts: [{ text: prompt }] }];
+    body.generationConfig = { ...(body.generationConfig || {}), maxOutputTokens: maxTokens };
+  } else {
+    body.messages = [{ role: 'user', content: prompt }];
+    body.max_tokens = maxTokens;
+  }
+  const res = await fetch(apiConfig.url, { method: 'POST', headers: apiConfig.headers, body: JSON.stringify(body) });
+  return { status: res.status, ok: res.ok !== false && res.status < 400, text: await res.text() };
+}
+
+const LIMIT_LABEL = {
+  context: 'за контекстом',
+  output: 'за стелею відповіді',
+  tier: 'ліміт тарифу',
+  tpm: 'хвилинний ліміт провайдера',
+  unknown: 'контекст невідомий',
+};
+
+const SOURCE_LABEL = {
+  'api-error': 'з помилки API',
+  'self-report': 'зі слів моделі, не перевірено',
+  'api-list': 'API-список',
+  'довідник': 'довідник',
+  'unknown': 'невідомо',
+};
+
+// Перед обробкою: якщо ліміти поточної моделі не відомі з живого списку API, виявляємо їх
+// самі (помилка API → слова моделі) і зберігаємо з позначкою джерела. Не частіше ніж раз на
+// ~30 днів на модель; нічого не ламає: будь-яка невдача лишає довідник / запасне значення.
+async function discoverLimits(platform, model, apiKey, openrouterModel) {
+  if (!model || !apiKey) return;
+  if (!(await needsDiscovery(platform, model))) return;
+
+  const fields = {};
+  try {
+    const r = await postMinimal(platform, apiKey, openrouterModel, 'ok', PROBE_MAX_TOKENS);
+    if (r.status === 429 || r.status >= 500) {
+      console.log(`[AI] ⓘ Виявлення лімітів ${model}: провайдер тимчасово недоступний (${r.status}), спробую пізніше`);
+      return;
+    }
+    const found = parseLimitsFromError(r.text);
+    if (!found.context && !found.maxOutput) {
+      // Для діагностики: що саме відповів API, щоб додати розпізнавання його формату
+      console.log(`[AI] ⓘ ${model}: проба лімітів нічого не розпізнала, відповідь API (${r.status}): ${String(r.text).replace(/\s+/g, ' ').slice(0, 220)}`);
+    }
+    if (found.context) fields.context = { value: found.context, source: 'api-error' };
+    if (found.maxOutput) fields.maxOutput = { value: found.maxOutput, source: 'api-error' };
+  } catch (e) {
+    console.log(`[AI] ⓘ Виявлення лімітів ${model}: запит не вдався (${e.message})`);
+    return;
+  }
+
+  // Самозвіт моделі — лише для РОЗМІРУ КОНТЕКСТУ і лише коли його немає ні з API-списку, ні з довідника.
+  // Макс. відповідь зі слів моделі не беремо: модель помиляється про себе, а таке значення лише обмежує текст.
+  const needSelf = !fields.context && !metaHas(model, 'context') && !(await hasLiveField(platform, model, 'context'));
+  if (needSelf) {
+    try {
+      const prompt = 'Відповідай ЛИШЕ JSON без пояснень: {"context_tokens": число} — максимальний розмір контексту (у токенах) для моделі, якою ти зараз є. Якщо не знаєш — null.';
+      const r = await postMinimal(platform, apiKey, openrouterModel, prompt, 1000);
+      if (r.ok) {
+        const txt = extractText(JSON.parse(r.text), platform);
+        const mm = txt.match(/\{[\s\S]*\}/);
+        if (mm) {
+          const j = JSON.parse(mm[0]);
+          const good = n => Number.isFinite(n) && n >= 256 && n <= 10_000_000;
+          if (good(j.context_tokens)) fields.context = { value: Math.round(j.context_tokens), source: 'self-report' };
+        }
+      }
+    } catch (e) { /* самозвіт не вдався — це нормально */ }
+  }
+
+  if (Object.keys(fields).length) {
+    await saveDiscovered(platform, model, { ts: Date.now(), fields });
+    if (fields.context) console.log(`[AI] ⓘ ${model}: контекст = ${fields.context.value} токенів [${SOURCE_LABEL[fields.context.source]}]`);
+    if (fields.maxOutput) console.log(`[AI] ⓘ ${model}: макс. відповідь = ${fields.maxOutput.value} токенів [${SOURCE_LABEL[fields.maxOutput.source]}]`);
+  } else {
+    await saveDiscovered(platform, model, { ts: Date.now(), none: true });
+    console.log(`[AI] ⓘ ${model}: ліміти виявити не вдалось — використовую довідник або запасне значення`);
+  }
+}
+
+// Облік витрачених токенів за прогін (скидається на старті обробки: resetUsageTotals)
+const usageTotals = { requests: 0, input: 0, output: 0, thinking: 0 };
+export function resetUsageTotals() {
+  usageTotals.requests = usageTotals.input = usageTotals.output = usageTotals.thinking = 0;
+}
+
+function extractUsage(data, platform) {
+  if (platform === 'gemini') {
+    const u = data.usageMetadata || {};
+    const think = u.thoughtsTokenCount || 0;
+    return { input: u.promptTokenCount || 0, output: (u.candidatesTokenCount || 0) + think, thinking: think };
+  }
+  if (platform === 'claude') {
+    const u = data.usage || {};
+    return { input: u.input_tokens || 0, output: u.output_tokens || 0, thinking: 0 };
+  }
+  const u = data.usage || {};
+  return { input: u.prompt_tokens || 0, output: u.completion_tokens || 0, thinking: u.completion_tokens_details?.reasoning_tokens || 0 };
+}
+
+// Ліміти й залишок квоти — лише те, що провайдер сам повідомив у заголовках відповіді.
+// Назви заголовків у провайдерів різні (x-ratelimit-limit-tokens-minute у Mistral,
+// x-ratelimit-limit-tokens у OpenAI-подібних і Groq, anthropic-ratelimit-tokens-limit у Claude),
+// тому розпізнаємо за змістом назви, а не за точним збігом.
+export function parseRateLimitHeaders(headers) {
+  const out = {};
+  if (!headers || typeof headers.forEach !== 'function') return out;
+  headers.forEach((value, name) => {
+    const n = String(name).toLowerCase();
+    if (!n.includes('ratelimit')) return;
+    const v = parseInt(value, 10);
+    if (!Number.isFinite(v)) return;
+    if (/reset|cost/.test(n)) return;
+    const month = /month|day|hour|week/.test(n);
+    const fiveMin = /5-minute|5min/.test(n);
+    const isTokens = n.includes('token');
+    const isReq = /req/.test(n) && !isTokens;
+    const isRemaining = n.includes('remaining');
+    const isLimit = n.includes('limit') && !isRemaining;
+    if (isTokens && !fiveMin) {
+      if (month) { if (isLimit) out.tokensMonth = v; else if (isRemaining) out.remainingMonth = v; }
+      else { if (isLimit) out.tpm = v; else if (isRemaining) out.remainingTpm = v; }
+    } else if (isReq && !month && !fiveMin) {
+      if (isLimit) out.rpm = v; else if (isRemaining) out.remainingReq = v;
+    }
+  });
+  const ra = parseInt(headers.get?.('retry-after'), 10);
+  if (Number.isFinite(ra)) out.retryAfter = ra;
+  return out;
+}
+
+// Останні запити в межах хвилини (для розрахунку паузи за хвилинним лімітом токенів)
+const rateState = { events: [], tpm: null, rpm: null, remainingTpm: null, lastTs: 0, platform: null, model: null };
+
+function learnRate(platform, model, q, spent) {
+  const now = Date.now();
+  // інша платформа чи модель — ліміти попередньої не переносимо
+  if (rateState.platform !== platform || rateState.model !== model) {
+    rateState.events = []; rateState.tpm = null; rateState.rpm = null; rateState.remainingTpm = null; rateState.lastTs = 0;
+  }
+  rateState.platform = platform; rateState.model = model;
+  rateState.events = rateState.events.filter(e => now - e.ts < 60000);
+  if (spent) rateState.events.push({ ts: now, tokens: spent });
+  rateState.lastTs = now;
+  if (q.tpm) rateState.tpm = q.tpm;
+  if (q.rpm) rateState.rpm = q.rpm;
+  rateState.remainingTpm = q.remainingTpm ?? null;
+  if ((q.tpm || q.rpm) && model) saveLearnedRate(platform, model, { tpm: q.tpm || null, rpm: q.rpm || null, ts: now }).catch(() => {});
+}
+
+// Скільки секунд почекати перед наступним запитом, щоб не перевищити ліміти провайдера:
+// (1) хвилинний ліміт токенів (ковзне вікно 60 с; очікувана вартість наступного запиту = вартість
+// останнього) і (2) хвилинний ліміт запитів (мінімальний інтервал 60 / запитів_на_хвилину).
+// Повертає null, якщо жодного ліміту не відомо.
+export function getAdaptivePause(platform) {
+  if (rateState.platform !== platform || (!rateState.tpm && !rateState.rpm) || !rateState.lastTs) return null;
+  const now = Date.now();
+  let wait = 0;
+
+  // ліміт запитів
+  if (rateState.rpm) {
+    const interval = 60 / (rateState.rpm * (1 - RATIOS.pauseMargin));
+    wait = Math.max(wait, interval - (now - rateState.lastTs) / 1000);
+  }
+
+  // ліміт токенів
+  let expected = null;
+  if (rateState.tpm && rateState.events.length) {
+    const cap = rateState.tpm * (1 - RATIOS.pauseMargin);
+    expected = rateState.events[rateState.events.length - 1].tokens;
+    let evs = rateState.events.filter(e => now - e.ts < 60000);
+    let used = evs.reduce((s, e) => s + e.tokens, 0);
+    while (evs.length && used + expected > cap) {
+      const oldest = evs.shift();
+      used -= oldest.tokens;
+      wait = Math.max(wait, (oldest.ts + 60000 - now) / 1000);
+    }
+    if (expected > cap) wait = Math.max(wait, 60); // один запит більший за ліміт: найбільше, що можна зробити
+  }
+  return { seconds: Math.max(0, Math.ceil(wait)), tpm: rateState.tpm, rpm: rateState.rpm, expected };
+}
+
+function logUsage(data, platform, headers, model = null) {
+  const u = extractUsage(data, platform);
+  usageTotals.requests++; usageTotals.input += u.input; usageTotals.output += u.output; usageTotals.thinking += u.thinking;
+  const q = parseRateLimitHeaders(headers);
+  learnRate(platform, model, q, u.input + u.output);
+  const parts = [];
+  if (q.remainingTpm != null || q.tpm != null) parts.push(`токенів за хвилину: ${q.remainingTpm ?? '?'} з ${q.tpm ?? '?'}`);
+  if (q.remainingMonth != null || q.tokensMonth != null) parts.push(`за місяць: ${q.remainingMonth ?? '?'} з ${q.tokensMonth ?? '?'}`);
+  if (q.remainingReq != null || q.rpm != null) parts.push(`запитів: ${q.remainingReq ?? '?'} з ${q.rpm ?? '?'}`);
+  const quota = parts.length ? `квота [від провайдера]: ${parts.join(', ')}` : 'залишок квоти: провайдер не повідомляє';
+  if (!u.input && !u.output) {
+    console.log(`[AI] ⓘ витрачено: провайдер не повідомив кількість токенів | за прогін: ${usageTotals.requests} запитів, вхід ${usageTotals.input} + відповідь ${usageTotals.output} = ${usageTotals.input + usageTotals.output} | ${quota}`);
+    return;
+  }
+  console.log(`[AI] ⓘ витрачено: вхід ${u.input} + відповідь ${u.output}${u.thinking ? ` (з них міркування ${u.thinking})` : ''} = ${u.input + u.output} токенів | за прогін: ${usageTotals.requests} запитів, вхід ${usageTotals.input} + відповідь ${usageTotals.output} = ${usageTotals.input + usageTotals.output} | ${quota}`);
+}
+
 export async function buildShort(fullText, platform, apiKey, sessionNum = null, openrouterModel = null, sessionDate = null) {
   if (!fullText) return '[контент недоступний]';
   const apiConfig = getApiConfig(platform, apiKey, openrouterModel);
   // Ефективна модель: у Gemini вона в URL, в інших — у body.model
   const effectiveModel = apiConfig.body.model || (platform === 'gemini' ? (openrouterModel || 'gemini-2.5-flash') : null);
   // Ліміт тексту — з довідника моделей (+ ліміт тарифу провайдера), а не зашите число
+  try { await discoverLimits(platform, effectiveModel, apiKey, openrouterModel); } catch (e) { console.warn('[AI] виявлення лімітів:', e.message); }
   const limitInfo = await getInputCharLimit(platform, effectiveModel, null, getPromptOverheadChars(), apiKey);
   const { limit: contextLimit, source: limitSource, contextTokens } = limitInfo;
 
@@ -131,7 +341,8 @@ export async function buildShort(fullText, platform, apiKey, sessionNum = null, 
     ];
   }
 
-  console.log(`[AI] → ${platform} запит (${fullText.length} символів, ліміт ${contextLimit}, джерело: ${limitSource}${contextTokens ? `, контекст моделі ${contextTokens} токенів` : ''}, бюджет відповіді ${maxOut} токенів)`);
+  const srcs = limitInfo.sources;
+  console.log(`[AI] → ${platform} запит (${fullText.length} символів, ліміт ${contextLimit} [${LIMIT_LABEL[limitSource] || limitSource}], контекст ${contextTokens || '—'} токенів [${SOURCE_LABEL[srcs.context]}], макс. відповідь ${limitInfo.maxOutput || '—'} [${SOURCE_LABEL[srcs.maxOutput]}], бюджет відповіді ${maxOut} токенів)`);
 
   const response = await fetch(apiConfig.url, {
     method: 'POST',
@@ -157,6 +368,7 @@ export async function buildShort(fullText, platform, apiKey, sessionNum = null, 
   }
 
   const { text: result, incomplete } = extractResult(data, platform);
+  logUsage(data, platform, response.headers, effectiveModel);
   console.log(`[AI] ✓ Результат: ${result.slice(0, 80)}...`);
   const parsed = parseShortAndTags(result);
 
@@ -379,6 +591,20 @@ export function checkAiStatus(status, platform) {
   }
 }
 
+// Текст відповіді OpenAI-подібних API. Зазвичай message.content — рядок, але моделі з міркуванням
+// (напр. mistral-large-4) повертають масив блоків: [{type:'thinking', ...}, {type:'text', text:'…'}].
+// Беремо лише текстові блоки; блоки міркування ігноруємо. Завжди повертає рядок.
+function contentToText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map(b => (typeof b === 'string' ? b : (b && b.type !== 'thinking' && b.type !== 'reasoning' && typeof b.text === 'string' ? b.text : '')))
+      .join('');
+  }
+  if (content && typeof content === 'object' && content.type !== 'thinking' && typeof content.text === 'string') return content.text;
+  return '';
+}
+
 // Повертає { text, incomplete }: text — усі частини відповіді, склеєні разом;
 // incomplete — причина обриву (порожній рядок, якщо модель завершила штатно).
 function extractResult(data, platform) {
@@ -400,7 +626,7 @@ function extractResult(data, platform) {
     const choice = data.choices?.[0];
     const reason = choice?.finish_reason || '';
     const bad = reason === 'length' || reason === 'content_filter';
-    return { text: choice?.message?.content || '', incomplete: bad ? reason : '' };
+    return { text: contentToText(choice?.message?.content), incomplete: bad ? reason : '' };
   }
   return { text: '', incomplete: '' };
 }
