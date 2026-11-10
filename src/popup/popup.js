@@ -563,12 +563,23 @@ function bindLiteEvents() {
     btn.disabled = true;
     btn.textContent = t('checking');
     status.style.display = 'none';
-    const res = await chrome.runtime.sendMessage({ type: 'CHECK_LIMIT', apiKey, platform: 'mistral', openrouterModel: null });
+    // Лайт не дає вибору моделі: перевіряємо ключ і підбираємо модель, яка йому реально доступна
+    const res = await chrome.runtime.sendMessage({ type: 'PICK_MODEL', apiKey, force: true });
     btn.disabled = false;
     btn.textContent = t('btnCheckKey');
     status.style.display = 'block';
     status.style.color = res.ok ? 'var(--ok,#4CAF50)' : 'var(--warn,#FF9800)';
-    status.textContent = res.message;
+    if (res.ok) {
+      // Великі числа скорочуємо (40000 → «40 тис.» / «40k»), щоб текст вміщався у 2 короткі рядки
+      const fmtK = n => (n >= 1000 ? `${Math.round(n / 100) / 10}${t('thousandAbbr')}` : String(n));
+      const lim = [res.tpm ? `${fmtK(res.tpm)} ${t('tpmUnit')}` : '', res.rpm ? `${res.rpm} ${t('rpmUnit')}` : ''].filter(Boolean).join(' · ');
+      // Рядок 1: ключ і модель; рядок 2: ліміти; рядок 3 (за потреби): застереження — перенос явний, а не випадковий
+      status.textContent = t('keyOkModel').replace('{m}', res.model).replace('{l}', lim ? `\n${lim}` : '')
+        + (res.limited && res.maxChars ? '\n' + t('keyLimited').replace('{n}', fmtK(res.maxChars)) : '');
+      if (res.limited) status.style.color = 'var(--warn,#FF9800)';
+    } else {
+      status.textContent = res.message;
+    }
   };
 
   $('lite-api-key').oninput = async () => {
@@ -629,7 +640,7 @@ function bindLiteEvents() {
       { const _st = document.getElementById('lite-btn-start-text'); if (_st) _st.textContent = ' ' + t('btnStop2'); }
       setLitePlayIcon('stop');
       startBtn.style.background = 'var(--warn,#FF9800)';
-      liteSetStatus('Обробка...', 'run');
+      liteSetStatus(t('stProcessing'), 'run');
     } else {
       liteRunning = false;
       liteStopping = false;
@@ -638,7 +649,7 @@ function bindLiteEvents() {
       setLitePlayIcon('play');
       startBtn.style.background = '';
       startBtn.disabled = false;
-      if (ps.processingState?.stopped) liteSetStatus('Зупинено', 'warn');
+      if (ps.processingState?.stopped) liteSetStatus(t('stStopped'), 'warn');
       chrome.runtime.sendMessage({ type: 'CLEAR_BADGE' });
     }
   });
@@ -655,21 +666,21 @@ function bindLiteEvents() {
       return;
     }
     if (!state.localDirHandle) {
-      liteLog('Оберіть папку перед запуском', 'err');
+      liteLog(t('errPickFolder'), 'err');
       return;
     }
     try {
       let perm = await state.localDirHandle.queryPermission({ mode: 'readwrite' });
       if (perm !== 'granted') perm = await state.localDirHandle.requestPermission({ mode: 'readwrite' });
-      if (perm !== 'granted') { liteLog('Доступ до папки не надано', 'err'); return; }
+      if (perm !== 'granted') { liteLog(t('errFolderDenied'), 'err'); return; }
       showLiteRestoreHint(false);
-    } catch (e) { liteLog('Помилка дозволу: ' + e.message, 'err'); return; }
+    } catch (e) { liteLog(t('errPermission') + ' ' + e.message, 'err'); return; }
 
     liteRunning = true;
     { const _st = document.getElementById('lite-btn-start-text'); if (_st) _st.textContent = ' ' + t('btnStop2'); }
     setLitePlayIcon('stop');
     startBtn.style.background = 'var(--warn,#FF9800)';
-    liteSetStatus('Обробка...', 'run');
+    liteSetStatus(t('stProcessing'), 'run');
 
     const hint = $('lite-sessions-hint');
     if (hint) { hint.style.display = 'flex'; const _ht = hint.querySelector('span[data-i18n]'); if (_ht) _ht.textContent = t('prefetchLoading'); }
@@ -678,7 +689,7 @@ function bindLiteEvents() {
     if (hint) hint.style.display = 'none';
 
     if (result?.error) {
-      liteLog(result.error, 'err');
+      liteLog(sessionsErrorText(result), 'err');
       liteRunning = false;
       { const st = document.getElementById('lite-btn-start-text'); if (st) st.textContent = ' ' + t('btnStart'); }
       setLitePlayIcon('play');
@@ -706,10 +717,10 @@ function bindLiteEvents() {
       }
       case 'PROGRESS':
         liteSetProgress(msg.done, msg.total);
-        liteLog(`Сесія ${msg.session} — готово`, 'ok');
+        liteLog(t('logSessionDone').replace('{s}', msg.session), 'ok');
         break;
       case 'INTEGRITY_WARN':
-        liteLog(`⚠️ Сесія №${msg.num}: ${t('integrityWarnShort')}`, 'warn');
+        liteLog(`⚠️ ${t('logSessionWarn').replace('{n}', msg.num)} ${t('integrityWarnShort')}`, 'warn');
         break;
       case 'DONE': {
         clearInterval(liteSwTimer); liteSwTimer = null;
@@ -723,8 +734,8 @@ function bindLiteEvents() {
           liteSetStatus(`⚠️ ${t('integrityWarnDone').replace('{n}', warnCount)}`, 'warn');
           liteLog(`⚠️ ${t('integrityWarnDone').replace('{n}', warnCount)}`, 'warn');
         } else {
-          liteSetStatus('Готово ✓', 'ok');
-          liteLog('Архів оновлено', 'ok');
+          liteSetStatus(t('stDone'), 'ok');
+          liteLog(t('logArchiveUpdated'), 'ok');
         }
         break;
       }
@@ -735,7 +746,7 @@ function bindLiteEvents() {
         setLitePlayIcon('play');
         startBtn.style.background = '';
         startBtn.disabled = false;
-        liteSetStatus('Зупинено', 'warn');
+        liteSetStatus(t('stStopped'), 'warn');
         break;
       case 'ERROR_STOP':
         liteRunning = false; liteStopping = false;
@@ -743,9 +754,18 @@ function bindLiteEvents() {
         setLitePlayIcon('play');
         startBtn.style.background = '';
         startBtn.disabled = false;
-        liteSetStatus('Помилка', 'err');
-        liteLog(msg.message || 'Помилка обробки', 'err');
+        liteSetStatus(t('stError'), 'err');
+        liteLog(msg.message || t('errProcessing'), 'err');
         const h1 = $('lite-sessions-hint'); if (h1) h1.style.display = 'none';
+        break;
+      case 'PARSER_SUSPECT':
+        liteRunning = false; liteStopping = false;
+        { const st = document.getElementById('lite-btn-start-text'); if (st) st.textContent = ' ' + t('btnStart'); }
+        setLitePlayIcon('play');
+        startBtn.style.background = '';
+        startBtn.disabled = false;
+        liteSetStatus(t('stError'), 'err');
+        liteLog(t('logParserSuspect').replace('{n}', msg.count).replace('{p}', msg.platform || ''), 'err');
         break;
       case 'STORAGE_ERROR':
         liteRunning = false; liteStopping = false;
@@ -753,7 +773,7 @@ function bindLiteEvents() {
         setLitePlayIcon('play');
         startBtn.style.background = '';
         startBtn.disabled = false;
-        liteSetStatus('Помилка збереження', 'err');
+        liteSetStatus(t('stSaveError'), 'err');
         showLiteRestoreHint(true);
         const h2 = $('lite-sessions-hint'); if (h2) h2.style.display = 'none';
         break;
@@ -1669,7 +1689,7 @@ async function checkPrefetchStatus() {
         hint.style.display = 'flex';
         hint.style.color = 'var(--text2, #aaa)';
         hint.textContent = state.platform === 'claude'
-          ? `↻ Сортування за датою... ${s.loaded}/${s.total}`
+          ? `${t('sortingByDate')} ${s.loaded}/${s.total}`
           : `${t('prefetchLoading')} ${s.loaded}`;
       }
     }
@@ -1730,23 +1750,35 @@ async function startProcessing() {
   // Для local storage — запитуємо дозвіл заздалегідь (поки popup відкритий)
   if (config.storage === 'local') {
     const handle = state.localDirHandle;
-    if (!handle) { log('Оберіть локальну папку перед запуском', 'err'); return; }
+    if (!handle) { log(t('errPickLocalFolder'), 'err'); return; }
     try {
       let perm = await handle.queryPermission({ mode: 'readwrite' });
       if (perm !== 'granted') perm = await handle.requestPermission({ mode: 'readwrite' });
-      if (perm !== 'granted') { log('Доступ до папки не надано', 'err'); return; }
+      if (perm !== 'granted') { log(t('errFolderDenied'), 'err'); return; }
       showRestoreHint(false);
-    } catch (e) { log('Помилка дозволу: ' + e.message, 'err'); return; }
+    } catch (e) { log(t('errPermission') + ' ' + e.message, 'err'); return; }
   }
 
   await refreshExisting();
 
   const result = await chrome.runtime.sendMessage({ type: 'GET_SESSIONS', config });
-  if (result?.error) { log(result.error, 'err'); return; }
+  if (result?.error) { log(sessionsErrorText(result), 'err'); return; }
 
   let sessions = filterSessions(result || [], config);
 
   chrome.runtime.sendMessage({ type: 'START_PROCESSING', config: { ...config, sessions } });
+}
+
+// Текст помилки GET_SESSIONS: код причини (порожній список сесій) → локалізований текст
+function sessionsErrorText(result) {
+  const p = result.platform || '';
+  const map = {
+    LAYOUT_CHANGED: t('errNoSessionsLayout'),
+    PANEL_CLOSED: t('errNoSessionsPanel'),
+    SCRIPT_NOT_LOADED: t('errScriptNotLoaded'),
+  };
+  const txt = map[result.errorCode];
+  return txt ? txt.replace(/\{p\}/g, p).replace('{n}', result.navLinks ?? 0) : result.error;
 }
 
 function buildConfig() {
@@ -1810,60 +1842,65 @@ chrome.runtime.onMessage.addListener((msg) => {
   switch (msg.type) {
     case 'PROGRESS':
       setProgress(msg.done, msg.total, msg.archName);
-      log(`Сесія №${msg.num} (${msg.session}) — готово`, 'ok');
+      log(t('logSessionDoneNum').replace('{n}', msg.num).replace('{s}', msg.session), 'ok');
       break;
 
     case 'MISSING_FOUND':
       if (msg.count === 0) {
-        log('✅ Пропущених сесій не знайдено — архів повний', 'ok');
-        setStatus('Архів повний', 'ok');
+        log(t('logNoMissing'), 'ok');
+        setStatus(t('stArchiveComplete'), 'ok');
       } else {
         log(`🔍 ${t('foundMissing')}: ${msg.count} — ${t('startingProc')}`, 'warn');
-        setStatus(`Обробка ${msg.count} пропущених сесій...`, 'info');
+        setStatus(t('stProcessingMissing').replace('{n}', msg.count), 'info');
       }
       break;
 
     case 'SKIPPED':
-      log(`⚡ Сесія №${msg.num} (${msg.session}) пропущена (${msg.reason})`, 'warn');
+      log(t('logSessionSkipped').replace('{n}', msg.num).replace('{s}', msg.session).replace('{r}', msg.reason), 'warn');
       break;
 
     case 'RATE_LIMITED':
-      setStatus('Ліміт моделі. Очікування...', 'warn');
+      setStatus(t('stModelLimit'), 'warn');
       toggle('limit-banner', true);
       startCountdown(msg.waitMinutes * 60);
       break;
 
     case 'LIMIT_RESUMED':
       toggle('limit-banner', false);
-      setStatus('Відновлення...', 'run');
+      setStatus(t('stResuming'), 'run');
       break;
 
     case 'RATE_LIMITED_STOP':
       setStatus(t('rateLimitStop'), 'warn');
-      log('Ліміт API вичерпано після 3 спроб. Відновлення — кнопка "Продовжити зараз".', 'warn');
+      log(t('logRateLimitStop'), 'warn');
       toggle('limit-banner', true);
       break;
 
     case 'TOKEN_EXPIRED_STOP':
-      setStatus('🔴 Токен OneDrive протух — обробку зупинено.', 'error');
-      log('Оновити access_token у Graph Explorer і запустити знову.', 'error');
+      setStatus(t('stTokenExpired'), 'error');
+      log(t('logTokenExpired'), 'error');
       break;
 
     case 'STORAGE_ERROR':
-      setStatus('🔴 Помилка збереження — обробку зупинено.', 'error');
-      log(`Перевірте токен доступу до хмарного сховища і запустіть знову. ${msg.message || ''}`, 'error');
+      setStatus(t('stStorageErr'), 'error');
+      log(`${t('logStorageErr')} ${msg.message || ''}`, 'error');
       if (state.storage === 'local') showRestoreHint(true);
       break;
 
+    case 'PARSER_SUSPECT':
+      setStatus(t('stParserSuspect'), 'error');
+      log(t('logParserSuspect').replace('{n}', msg.count).replace('{p}', msg.platform || ''), 'error');
+      break;
+
     case 'ERROR_STOP':
-      setStatus('🔴 Обробку зупинено після 3 помилок поспіль.', 'error');
-      log(`Помилка: ${msg.message || 'невідома'}. Перевірте API-ключ, модель або розмір сесій і запустіть знову.`, 'error');
+      setStatus(t('stErrorStop'), 'error');
+      log(t('logErrorStop').replace('{m}', msg.message || t('errUnknown')), 'error');
       break;
 
     // ── НОВЕ: вкладку закрито під час обробки ──
     case 'TAB_CLOSED':
-      setStatus('⚠️ Вкладку Claude закрито — обробку зупинено', 'warn');
-      log('Відкрийте вкладку Claude щоб продовжити', 'warn');
+      setStatus(t('stTabClosed'), 'warn');
+      log(t('logTabClosed'), 'warn');
       break;
 
     case 'SW_LOG': {
@@ -1934,7 +1971,7 @@ async function updateContextWarning(provider, modelId) {
       hint = metaHint;
     } else if (liveCtx) {
       const ctxStr = liveCtx >= 1000000 ? `${liveCtx/1000000}M` : `${(liveCtx/1000).toFixed(0)}K`;
-      hint = `${ctxStr} контекст`;
+      hint = `${ctxStr} ${t('ctxWord')}`;
     }
 
     // Той самий розрахунок, що й в ai.js (контекст моделі + ліміт тарифу)
@@ -2003,12 +2040,12 @@ function startCountdown(seconds) {
 
 function buildDoneScreen(systemPrompt, integrityWarnings) {
   const badges = [
-    'Архів оновлено',
-    '_system/ збережено',
-    'memory.txt готовий',
-    'Системний промпт ✓',
+    t('doneBadgeArchive'),
+    t('doneBadgeSystem'),
+    t('doneBadgeMemory'),
+    t('doneBadgePrompt'),
   ];
-  $('done-badges').innerHTML = badges.map(t => `<div class="dbadge">${t}</div>`).join('');
+  $('done-badges').innerHTML = badges.map(b => `<div class="dbadge">${b}</div>`).join('');
 
   const warnCount = (integrityWarnings || []).length;
   const warnBox = $('done-integrity-warn');
@@ -2068,7 +2105,7 @@ function createBook() {
     } else if (msg.type === 'BOOK_ERROR') {
       chrome.runtime.onMessage.removeListener(onProgress);
       reset();
-      alert('Помилка: ' + (msg.error || 'невідома'));
+      alert(t('errBookPrefix') + ' ' + (msg.error || t('errUnknown')));
     }
   };
   chrome.runtime.onMessage.addListener(onProgress);
@@ -2097,8 +2134,8 @@ async function updateModelSelect(provider, apiKey = '', savedModel = null) {
   toggle('model-select-wrap', show);
   if (!show) return;
 
-  const label = { openrouter: 'Модель OpenRouter', gemini: 'Модель Gemini', groq: 'Модель Groq', mistral: 'Модель Mistral', qwen: 'Модель Qwen', huggingface: 'Модель HuggingFace' };
-  $('model-select-label').textContent = label[provider] || 'Модель';
+  const providerNames = { openrouter: 'OpenRouter', gemini: 'Gemini', groq: 'Groq', mistral: 'Mistral', qwen: 'Qwen', huggingface: 'HuggingFace' };
+  $('model-select-label').textContent = providerNames[provider] ? t('modelLabel').replace('{p}', providerNames[provider]) : t('modelLabelPlain');
 
   const sel = $('model-select');
   sel.innerHTML = '<option>' + t('loadingModels') + '</option>';
@@ -2123,7 +2160,7 @@ async function updateModelSelect(provider, apiKey = '', savedModel = null) {
       modelErr.style.display = 'block';
     }
   } catch (e) {
-    modelErr.textContent = '\u26a0 Не вдалось завантажити моделі: ' + e.message;
+    modelErr.textContent = '\u26a0 ' + t('errModelsLoad') + ' ' + e.message;
     modelErr.style.display = 'block';
   }
 
