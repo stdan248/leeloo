@@ -30,11 +30,37 @@
   }
   loadDatesFromLocalStorage();
 
+  // ── Посилання на чати в бічній панелі ─────────────────────────────────────
+  // Спершу відомі селектори (#history, data-sidebar-item). Якщо ChatGPT змінив верстку і вони нічого
+  // не знаходять (так було 08.11.2026: «порожній список сесій» при 20 посиланнях у панелі) —
+  // беремо будь-які посилання /c/<id> поза повідомленнями розмови.
+  function mbChatLinks() {
+    const known = document.querySelectorAll('#history a[href*="/c/"], a[data-sidebar-item="true"][href*="/c/"]');
+    if (known.length) return Array.from(known);
+    return Array.from(document.querySelectorAll('a[href*="/c/"]')).filter(a => {
+      const href = a.getAttribute('href') || '';
+      return /\/c\/[0-9A-Za-z-]{8,}/.test(href) && !a.closest('[data-message-author-role], [data-turn-key], main article');
+    });
+  }
+
+  // Контейнер списку, що прокручується (щоб підвантажити решту сесій)
+  function mbSidebarScroller(links) {
+    const hist = document.querySelector('#history');
+    if (hist) return hist;
+    let el = links[0] && links[0].parentElement;
+    while (el && el !== document.body) {
+      const oy = getComputedStyle(el).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 20) return el;
+      el = el.parentElement;
+    }
+    return links[0] ? (links[0].closest('nav, aside') || null) : null;
+  }
+
   if (!window.__mbLoadDone) window.__mbLoadDone = false;
   if (!window.__mbLoadedCount) window.__mbLoadedCount = 0;
 
   window.__mbPrefetchStatus = function () {
-    const domCount = document.querySelectorAll('#history a[href*="/c/"], a[data-sidebar-item="true"][href*="/c/"]').length;
+    const domCount = mbChatLinks().length;
     const count = Math.max(domCount, window.__mbLoadedCount);
     return { ready: window.__mbLoadDone, total: count, loaded: count };
   };
@@ -53,7 +79,7 @@
     return new Promise((resolve) => {
 
       function startScroll() {
-        const sidebar = document.querySelector('#history');
+        const sidebar = mbSidebarScroller(mbChatLinks());
         if (!sidebar) { resolve(); return; }
 
         let lastCount = 0;
@@ -68,10 +94,10 @@
             return;
           }
           attempts++;
-          const lastItem = sidebar.querySelector('li:last-child');
+          const lastItem = sidebar.querySelector('li:last-child') || mbChatLinks().slice(-1)[0];
           if (lastItem) lastItem.scrollIntoView();
 
-          const count = document.querySelectorAll('#history a[href*="/c/"], a[data-sidebar-item="true"][href*="/c/"]').length;
+          const count = mbChatLinks().length;
           if (count === lastCount) {
             stableFor++;
           } else {
@@ -94,17 +120,18 @@
       }
 
       // Якщо #history вже є — одразу
-      if (document.querySelector('#history')) {
+      if (document.querySelector('#history') || mbChatLinks().length) {
         startScroll();
         return;
       }
 
       // Інакше — клікаємо кнопку і чекаємо через MutationObserver
-      const openBtn = document.querySelector('[data-testid="open-sidebar-button"]');
+      const openBtn = document.querySelector('[data-testid="open-sidebar-button"]')
+        || document.querySelector('button[aria-label*="idebar"], button[aria-label*="бічн"]');
       if (openBtn) openBtn.click();
 
       const observer = new MutationObserver(() => {
-        if (document.querySelector('#history')) {
+        if (document.querySelector('#history') || mbChatLinks().length) {
           observer.disconnect();
           setTimeout(startScroll, 200);
         }
@@ -124,7 +151,7 @@
 
     const sessions = [];
     const seen = new Set();
-    const items = document.querySelectorAll('#history a[href*="/c/"], a[data-sidebar-item="true"][href*="/c/"]');
+    const items = mbChatLinks();
 
     items.forEach((el) => {
       const href = el.getAttribute('href') || '';
@@ -168,14 +195,48 @@
   const MB_TIME_LIMIT = 120000;
   const MB_EMPTY_RETRY_BUDGET = 30;
   const MB_SELECTOR = '[data-message-author-role="user"], [data-message-author-role="assistant"]';
+  // Нова верстка (помічено 09.11.2026): атрибута data-message-author-role більше немає. Кожне повідомлення
+  // тепер у блоці, що іде ОДРАЗУ ПІСЛЯ прихованого заголовка h4[data-conversation-role="user|assistant"]
+  // (для користувача — div.group/user-message з бульбашкою [data-user-message-bubble], для відповіді —
+  // div із розміткою markdown). Службові частини (кнопки дій) лежать поза цими блоками.
+  const MB_HEADING = 'h4[data-conversation-role]';
+
+  // Вузли повідомлень: спершу старий селектор, якщо його немає — заголовки нової верстки
+  function mbMessageNodes() {
+    const old = document.querySelectorAll(MB_SELECTOR);
+    if (old.length) return Array.from(old);
+    return Array.from(document.querySelectorAll(MB_HEADING));
+  }
 
   const mbSleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   function mbExtractMessage(el) {
+    if (el.matches && el.matches(MB_HEADING)) {
+      const role = el.getAttribute('data-conversation-role') === 'user' ? 'User' : 'ChatGPT';
+      const block = el.nextElementSibling;
+      // бульбашка користувача без ряду кнопок; innerText зберігає абзаци й рядки коду
+      const src = block ? (block.querySelector('[data-user-message-bubble="true"]') || block) : null;
+      const text = src ? ((src.innerText || src.textContent || '').trim()) : '';
+      return { role, text, sig: role + '|' + text.slice(0, 80) };
+    }
     const role = el.dataset.messageAuthorRole === 'user' ? 'User' : 'ChatGPT';
     const text = el.textContent?.trim() || '';
     return { role, text, sig: role + '|' + text.slice(0, 80) };
   }
+
+  // Дата розмови: у новій верстці вона в розділювачі туру — div[role="separator"] > time[datetime].
+  // Збираємо дати з усіх вікон прокрутки; найраніша = початок розмови (перший тур може бути поза DOM
+  // через віртуалізацію, тому одного вікна замало).
+  let mbSeenDates = [];
+  function mbCollectDates() {
+    document.querySelectorAll('div[role="separator"] time[datetime]').forEach(t => {
+      const ms = Date.parse(t.getAttribute('datetime'));
+      if (!isNaN(ms)) mbSeenDates.push(ms);
+    });
+  }
+  window.__mbGetCreatedAt = function () {
+    return mbSeenDates.length ? new Date(Math.min(...mbSeenDates)).toISOString() : null;
+  };
 
   function mbFindScrollParent(el) {
     let p = el ? el.parentElement : null;
@@ -190,7 +251,7 @@
   async function mbReadWindow(stats) {
     let msgs = [];
     for (let attempt = 0; attempt < 4; attempt++) {
-      msgs = Array.from(document.querySelectorAll(MB_SELECTOR)).map(mbExtractMessage);
+      msgs = mbMessageNodes().map(mbExtractMessage);
       const empty = msgs.filter(m => !m.text).length;
       if (!empty) return { msgs, domCount: msgs.length };
       if (attempt < 3 && stats.emptyRetries < MB_EMPTY_RETRY_BUDGET) {
@@ -232,12 +293,13 @@
 
   window.__mbGetSessionContent = async function () {
     const stats = { steps: 0, maxDom: 0, emptyRetries: 0, emptySeen: 0, emptyLeft: 0, gaps: 0, stuck: false, timeout: false };
+    mbSeenDates = [];
     const t0 = Date.now();
     try {
-      let first = document.querySelector(MB_SELECTOR);
+      let first = mbMessageNodes()[0];
       for (let i = 0; i < 10 && !first; i++) {
         await mbSleep(300);
-        first = document.querySelector(MB_SELECTOR);
+        first = mbMessageNodes()[0];
       }
       if (!first) return '';
 
@@ -247,7 +309,7 @@
       for (let i = 0; i < 12 && stable < 2; i++) {
         scroller.scrollTop = 0;
         await mbSleep(500);
-        const c = document.querySelectorAll(MB_SELECTOR).length;
+        const c = mbMessageNodes().length;
         if (c === lastCount) stable++; else { stable = 0; lastCount = c; }
       }
 
@@ -257,6 +319,7 @@
       for (let step = 0; step < MB_MAX_STEPS; step++) {
         stats.steps++;
         const { msgs, domCount } = await mbReadWindow(stats);
+        mbCollectDates();
         stats.maxDom = Math.max(stats.maxDom, domCount);
         if (msgs.length > best.length) best = msgs;
         if (!mbMergeWindow(acc, msgs)) stats.gaps++;
